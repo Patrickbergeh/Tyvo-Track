@@ -1,0 +1,5 @@
+ALTER TABLE fb_events_raw
+  ADD COLUMN IF NOT EXISTS em text,
+  ADD COLUMN IF NOT EXISTS ph text,
+  ADD COLUMN IF NOT EXISTS fn text,
+  ADD COLUMN IF NOT EXISTS ln text;

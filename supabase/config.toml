@@ -1,0 +1,9 @@
+project_id = "tqqqnmdffmzolnlrggqd"
+
+# Funções chamadas pelo navegador do visitante (sem header de autenticação).
+# verify_jwt = false é obrigatório, senão o <script>/beacon recebem 401.
+[functions.loader]
+verify_jwt = false
+
+[functions.track]
+verify_jwt = false
