@@ -21,6 +21,7 @@ import { NewWorkspaceDialog } from "@/components/NewWorkspaceDialog";
 import { VisitorMap } from "@/components/VisitorMap";
 import { DateRangeFilter, getPresetRange, type DatePreset, type DateRange } from "@/components/DateRangeFilter";
 import { prettySource, prettyMedium } from "@/lib/utm";
+import { cleanState } from "@/lib/geo";
 
 const PAGE_SIZE = 50;
 
@@ -510,7 +511,7 @@ return (
                           <TableCell className="py-2 text-center"><UtmCell w={135} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
                           <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.ip || "—"}</TableCell>
                           <TableCell className="py-2"><Flag code={evt.country} /></TableCell>
-                          <TableCell className="py-2 text-[11px] text-muted-foreground uppercase">{evt.state || "—"}</TableCell>
+                          <TableCell className="py-2 text-[11px] text-muted-foreground">{cleanState(evt.state)}</TableCell>
                           <TableCell className="py-2 text-[11px] text-muted-foreground capitalize">{evt.city || "—"}</TableCell>
                           <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.zip || "—"}</TableCell>
                           <TableCell className="py-2">

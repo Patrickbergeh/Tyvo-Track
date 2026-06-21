@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { cleanState } from "@/lib/geo";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface LiveEvent {
@@ -73,10 +74,10 @@ function EventCard({ ev }: { ev: LiveEvent }) {
 
   const geoLine = [
     resolveName(ev.country, "country"),
-    resolveName(ev.state, "state"),
+    cleanState(ev.state),
     resolveName(ev.city, "city"),
     ev.zip || null,
-  ].filter(Boolean).join(" · ");
+  ].filter((v) => v && v !== "—").join(" · ");
 
   return (
     <div className="border-b border-border/30 px-4 py-3 flex flex-col gap-1.5 hover:bg-muted/20 transition-colors">
