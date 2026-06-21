@@ -193,7 +193,7 @@ const Codmov = () => {
   }, [activePropertyId]);
 
   return (
-    <div className="h-screen flex flex-col bg-background overflow-hidden">
+    <div className="h-full flex flex-col bg-background overflow-hidden">
       {/* Navbar */}
       <header className="border-b border-border bg-background shrink-0">
         <div className="flex items-center justify-between px-6 h-[60px] gap-4">
@@ -215,7 +215,7 @@ const Codmov = () => {
       </header>
 
       {/* Bloco principal */}
-      <div className="flex-1 min-h-0 flex flex-col m-4 rounded-xl border border-border/40 bg-card overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col mt-4 rounded-xl border border-border/40 bg-card overflow-hidden">
         {/* Header do bloco */}
         <div className="shrink-0 px-4 py-3 border-b border-border/40 flex items-center justify-between">
           <p className="text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-widest">
