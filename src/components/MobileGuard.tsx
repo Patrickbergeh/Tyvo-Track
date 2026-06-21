@@ -1,31 +1,32 @@
 import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
 
-const MOBILE_BREAKPOINT = 1024;
-
+// Detecção por DISPOSITIVO (não por largura de tela): um desktop com a janela
+// estreita NÃO é bloqueado; só celulares/tablets reais.
 function detectMobile() {
   if (typeof window === "undefined") return false;
-  const byWidth = window.innerWidth < MOBILE_BREAKPOINT;
-  const byAgent =
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(
-      navigator.userAgent
-    );
-  const byTouch =
-    "ontouchstart" in window && navigator.maxTouchPoints > 0 && byWidth;
-  return byWidth || byAgent || byTouch;
+
+  // 1) API moderna (Chromium): informa se é um dispositivo móvel de verdade
+  const uaData = (navigator as unknown as { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (uaData && typeof uaData.mobile === "boolean") return uaData.mobile;
+
+  // 2) Fallback pelo user-agent do dispositivo
+  const ua = navigator.userAgent || (navigator as unknown as { vendor?: string }).vendor || "";
+  if (/Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(ua)) return true;
+
+  // 3) iPad no iOS 13+ se identifica como "Macintosh" — diferencia por toque real
+  if (/iPad/i.test(ua)) return true;
+  if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+
+  return false;
 }
 
 export function MobileGuard({ children }: { children: React.ReactNode }) {
   const [isMobile, setIsMobile] = useState(detectMobile);
 
   useEffect(() => {
-    const onResize = () => setIsMobile(detectMobile());
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
+    // Reavalia uma vez após montar (caso userAgentData resolva tarde)
+    setIsMobile(detectMobile());
   }, []);
 
   if (!isMobile) return <>{children}</>;
