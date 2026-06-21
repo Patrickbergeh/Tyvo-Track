@@ -395,8 +395,8 @@ return (
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4">
           {[
-            { label: "Total de Eventos", value: totalEvents, color: "text-foreground", icon: Zap, iconColor: "text-primary", bg: "bg-primary/8" },
             { label: "Visitas Únicas", value: uniqueVisitors, color: "text-foreground", icon: Users, iconColor: "text-blue-500", bg: "bg-blue-500/8" },
+            { label: "Total de Eventos", value: totalEvents, color: "text-foreground", icon: Zap, iconColor: "text-primary", bg: "bg-primary/8" },
             { label: "Processados", value: processed, color: "text-[hsl(var(--success))]", icon: CheckCircle2, iconColor: "text-[hsl(var(--success))]", bg: "bg-[hsl(var(--success))]/8" },
             { label: "Pendentes", value: pending, color: "text-[hsl(var(--warning))]", icon: CircleDot, iconColor: "text-[hsl(var(--warning))]", bg: "bg-[hsl(var(--warning))]/8" },
           ].map(({ label, value, color, icon: Icon, iconColor, bg }) => (
