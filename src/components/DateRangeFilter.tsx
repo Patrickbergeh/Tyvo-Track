@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { startOfDay, endOfDay, subDays, format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import type { DateRange as PickRange } from "react-day-picker";
 import { CalendarIcon, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -47,7 +48,13 @@ interface Props {
 
 export const DateRangeFilter = ({ value, customRange, onChange }: Props) => {
   const [open, setOpen] = useState(false);
-  const [picking, setPicking] = useState<{ from?: Date; to?: Date }>({});
+  const [picking, setPicking] = useState<PickRange | undefined>(undefined);
+
+  // Abre o popover já com a seleção atual (se houver)
+  const openCustom = () => {
+    setPicking(customRange ? { from: customRange.from, to: customRange.to } : undefined);
+    setOpen(true);
+  };
 
   const handlePreset = (preset: DatePreset) => {
     if (preset === "all") {
@@ -55,39 +62,33 @@ export const DateRangeFilter = ({ value, customRange, onChange }: Props) => {
     } else if (preset !== "custom") {
       onChange(preset, getPresetRange(preset as Exclude<DatePreset, "all" | "custom">));
     } else {
-      setOpen(true);
+      openCustom();
     }
   };
 
-  const handleDayClick = (day: Date | undefined) => {
-    if (!day) return;
-    if (!picking.from || (picking.from && picking.to)) {
-      setPicking({ from: startOfDay(day) });
-    } else {
-      const from = picking.from;
-      const to = endOfDay(day >= from ? day : from);
-      const correctedFrom = day >= from ? from : startOfDay(day);
-      setPicking({});
-      setOpen(false);
-      onChange("custom", { from: correctedFrom, to });
-    }
+  const apply = () => {
+    if (!picking?.from || !picking?.to) return;
+    onChange("custom", { from: startOfDay(picking.from), to: endOfDay(picking.to) });
+    setOpen(false);
   };
 
-  const formatCustomLabel = () => {
-    if (!customRange) return "Personalizado";
-    const f = (d: Date) => format(d, "dd/MM/yyyy", { locale: ptBR });
-    return `${f(customRange.from)} – ${f(customRange.to)}`;
-  };
+  const fmt = (d: Date) => format(d, "dd/MM/yyyy", { locale: ptBR });
+  const formatCustomLabel = () =>
+    customRange ? `${fmt(customRange.from)} – ${fmt(customRange.to)}` : "Personalizado";
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {PRESETS.map((p) => {
         const isActive = value === p.id;
         return p.id === "custom" ? (
-          <Popover key="custom" open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPicking({}); }}>
+          <Popover
+            key="custom"
+            open={open}
+            onOpenChange={(o) => { setOpen(o); if (o) setPicking(customRange ? { from: customRange.from, to: customRange.to } : undefined); }}
+          >
             <PopoverTrigger asChild>
               <button
-                onClick={() => handlePreset("custom")}
+                onClick={openCustom}
                 className={cn(
                   "inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium border transition-colors",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -105,45 +106,51 @@ export const DateRangeFilter = ({ value, customRange, onChange }: Props) => {
               align="end"
               className="w-auto p-0 border border-border shadow-xl rounded-xl overflow-hidden"
             >
-              <div className="px-4 pt-3 pb-1 border-b border-border bg-muted/40">
-                <p className="text-xs font-semibold text-foreground">Selecione o período</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {picking.from
-                    ? `Início: ${format(picking.from, "dd/MM/yyyy", { locale: ptBR })} — clique no fim`
-                    : "Clique no dia de início"}
-                </p>
+              {/* Marcação de início e fim */}
+              <div className="flex items-stretch border-b border-border bg-muted/40 text-xs">
+                <div className="flex-1 px-4 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Início</p>
+                  <p className={cn("font-semibold mt-0.5", picking?.from ? "text-foreground" : "text-muted-foreground/50")}>
+                    {picking?.from ? fmt(picking.from) : "—"}
+                  </p>
+                </div>
+                <div className="w-px bg-border" />
+                <div className="flex-1 px-4 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Fim</p>
+                  <p className={cn("font-semibold mt-0.5", picking?.to ? "text-foreground" : "text-muted-foreground/50")}>
+                    {picking?.to ? fmt(picking.to) : "—"}
+                  </p>
+                </div>
               </div>
+
               <Calendar
-                mode="single"
+                mode="range"
                 locale={ptBR}
-                selected={picking.from}
-                onSelect={handleDayClick}
+                numberOfMonths={2}
+                selected={picking}
+                onSelect={setPicking}
+                defaultMonth={customRange?.from ?? subDays(new Date(), 30)}
                 disabled={(d) => d > new Date()}
-                modifiers={
-                  picking.from && picking.to
-                    ? { range_start: picking.from, range_end: picking.to }
-                    : picking.from
-                    ? { range_start: picking.from }
-                    : {}
-                }
-                modifiersClassNames={{
-                  range_start: "bg-primary text-primary-foreground rounded-full",
-                  range_end:   "bg-primary text-primary-foreground rounded-full",
-                }}
                 className="p-3"
               />
-              {picking.from && (
-                <div className="px-3 pb-3 flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-muted-foreground h-7"
-                    onClick={() => setPicking({})}
-                  >
-                    Limpar
-                  </Button>
-                </div>
-              )}
+
+              <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-1 border-t border-border">
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-xs text-muted-foreground h-8"
+                  onClick={() => setPicking(undefined)}
+                >
+                  Limpar
+                </Button>
+                <Button
+                  size="sm"
+                  className="text-xs h-8"
+                  disabled={!picking?.from || !picking?.to}
+                  onClick={apply}
+                >
+                  Aplicar período
+                </Button>
+              </div>
             </PopoverContent>
           </Popover>
         ) : (
