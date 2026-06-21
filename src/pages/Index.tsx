@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Clock, Globe, CheckCircle2, Eye, Zap, CircleDot, Settings,
   Server, Monitor, RefreshCw, ChevronDown, Building2, Plus,
-  ChevronLeft, ChevronRight, Table2, MapPin,
+  ChevronLeft, ChevronRight, Table2, MapPin, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -267,17 +267,22 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const { data: statsData } = useQuery({
     queryKey: ["fb-events-stats", activeProperty?.id, activeDateRange?.from?.toISOString(), activeDateRange?.to?.toISOString()],
     queryFn: async () => {
-      if (!activeProperty) return { total: 0, processed: 0 };
+      if (!activeProperty) return { total: 0, processed: 0, unique: 0 };
       const applyFilters = (q: any) => {
         q = q.eq("property_id", activeProperty.id);
         if (!activeDateRange) return q;
         return q.gte("created_at", activeDateRange.from.toISOString()).lte("created_at", activeDateRange.to.toISOString());
       };
-      const [{ count: total }, { count: proc }] = await Promise.all([
+      const [{ count: total }, { count: proc }, uniqRes] = await Promise.all([
         applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true })),
         applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true }).eq("processed", true)),
+        supabase.rpc("unique_visitors", {
+          p_property: activeProperty.id,
+          p_from: activeDateRange?.from?.toISOString() ?? null,
+          p_to: activeDateRange?.to?.toISOString() ?? null,
+        }),
       ]);
-      return { total: total ?? 0, processed: proc ?? 0 };
+      return { total: total ?? 0, processed: proc ?? 0, unique: Number(uniqRes.data ?? 0) };
     },
     enabled: !!activeProperty,
     refetchInterval: 60000,
@@ -290,6 +295,7 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const totalEvents = statsData?.total ?? 0;
   const processed   = statsData?.processed ?? 0;
   const pending     = totalEvents - processed;
+  const uniqueVisitors = statsData?.unique ?? 0;
 
   // Total real de páginas vem do count do servidor (não das linhas carregadas)
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -387,9 +393,10 @@ return (
       <main className="flex-1 flex flex-col gap-5 min-h-0 pt-4">
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           {[
             { label: "Total de Eventos", value: totalEvents, color: "text-foreground", icon: Zap, iconColor: "text-primary", bg: "bg-primary/8" },
+            { label: "Visitas Únicas", value: uniqueVisitors, color: "text-foreground", icon: Users, iconColor: "text-blue-500", bg: "bg-blue-500/8" },
             { label: "Processados", value: processed, color: "text-[hsl(var(--success))]", icon: CheckCircle2, iconColor: "text-[hsl(var(--success))]", bg: "bg-[hsl(var(--success))]/8" },
             { label: "Pendentes", value: pending, color: "text-[hsl(var(--warning))]", icon: CircleDot, iconColor: "text-[hsl(var(--warning))]", bg: "bg-[hsl(var(--warning))]/8" },
           ].map(({ label, value, color, icon: Icon, iconColor, bg }) => (
