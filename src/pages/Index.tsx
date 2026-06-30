@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Clock, Globe, CheckCircle2, Eye, Zap, CircleDot, Settings,
   Server, Monitor, RefreshCw, ChevronDown, Building2, Plus,
-  ChevronLeft, ChevronRight, Table2, MapPin, Users,
+  ChevronLeft, ChevronRight, Table2, MapPin, Users, Smartphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -46,6 +46,14 @@ const STATE_TO_REGION: Record<string, string> = {
   "pr":"Sul","rs":"Sul","sc":"Sul",
 };
 const BRAZIL_NAMES = ["brazil","brasil","br","bra"];
+
+// Tipo de dispositivo a partir do user-agent gravado no evento.
+function deviceType(ua: string | null | undefined): "Mobile" | "Desktop" | null {
+  if (!ua) return null;
+  return /Mobi|Android|iPhone|iPad|iPod|Windows Phone|BlackBerry|webOS|Opera Mini|IEMobile|Tablet/i.test(ua)
+    ? "Mobile"
+    : "Desktop";
+}
 
 export function getRegion(state: string | null, country: string | null): string {
   const isBrazil = country ? BRAZIL_NAMES.includes(country.toLowerCase().trim()) : false;
@@ -462,6 +470,7 @@ return (
                       <TableHead className="text-xs font-medium min-w-[150px] text-center pl-5">Origem</TableHead>
                       <TableHead className="text-xs font-medium min-w-[95px] text-center">Mídia</TableHead>
                       <TableHead className="text-xs font-medium min-w-[140px] text-center">Campanha</TableHead>
+                      <TableHead className="text-xs font-medium">Dispositivo</TableHead>
                       <TableHead className="text-xs font-medium">IP</TableHead>
                       <TableHead className="text-xs font-medium">País</TableHead>
                       <TableHead className="text-xs font-medium">Estado</TableHead>
@@ -516,6 +525,19 @@ return (
                           <TableCell className="py-2 text-center pl-5"><UtmCell w={120} value={prettySource(evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
                           <TableCell className="py-2 text-center"><UtmCell w={90}  value={prettyMedium(evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
                           <TableCell className="py-2 text-center"><UtmCell w={135} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
+                          <TableCell className="py-2">
+                            {(() => {
+                              const dt = deviceType(evt.user_agent);
+                              if (!dt) return <span className="text-[11px] text-muted-foreground">—</span>;
+                              const Icon = dt === "Mobile" ? Smartphone : Monitor;
+                              return (
+                                <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
+                                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                                  {dt}
+                                </span>
+                              );
+                            })()}
+                          </TableCell>
                           <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.ip || "—"}</TableCell>
                           <TableCell className="py-2"><Flag code={evt.country} /></TableCell>
                           <TableCell className="py-2 text-[11px] text-muted-foreground">{cleanState(evt.state)}</TableCell>
