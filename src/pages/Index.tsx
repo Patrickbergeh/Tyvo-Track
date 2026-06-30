@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Clock, Globe, CheckCircle2, Eye, Zap, CircleDot, Settings,
   Server, Monitor, RefreshCw, ChevronDown, Building2, Plus,
-  ChevronLeft, ChevronRight, Table2, MapPin, Users, Smartphone,
+  ChevronLeft, ChevronRight, Table2, MapPin, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -525,18 +525,8 @@ return (
                           <TableCell className="py-2 text-center pl-5"><UtmCell w={120} value={prettySource(evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
                           <TableCell className="py-2 text-center"><UtmCell w={90}  value={prettyMedium(evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
                           <TableCell className="py-2 text-center"><UtmCell w={135} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
-                          <TableCell className="py-2">
-                            {(() => {
-                              const dt = deviceType(evt.user_agent);
-                              if (!dt) return <span className="text-[11px] text-muted-foreground">—</span>;
-                              const Icon = dt === "Mobile" ? Smartphone : Monitor;
-                              return (
-                                <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                                  <Icon className="h-3.5 w-3.5 shrink-0" />
-                                  {dt}
-                                </span>
-                              );
-                            })()}
+                          <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">
+                            {deviceType(evt.user_agent) ?? "—"}
                           </TableCell>
                           <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.ip || "—"}</TableCell>
                           <TableCell className="py-2"><Flag code={evt.country} /></TableCell>
