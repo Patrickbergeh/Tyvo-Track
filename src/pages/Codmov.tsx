@@ -188,8 +188,18 @@ const Codmov = () => {
     if (!activePropertyId) return;
     setLoading(true);
     load(activePropertyId);
-    const interval = setInterval(() => load(activePropertyId), 10000);
-    return () => clearInterval(interval);
+    // Tempo real: recarrega na hora a cada novo evento desta propriedade
+    const channel = supabase
+      .channel(`codmov-rt-${activePropertyId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "fb_events_raw", filter: `property_id=eq.${activePropertyId}` },
+        () => load(activePropertyId)
+      )
+      .subscribe();
+    // Fallback por polling caso o realtime caia
+    const interval = setInterval(() => load(activePropertyId), 15000);
+    return () => { clearInterval(interval); supabase.removeChannel(channel); };
   }, [activePropertyId]);
 
   return (

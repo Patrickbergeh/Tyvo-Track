@@ -267,7 +267,7 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
       return { rows: data ?? [], totalCount: count ?? 0 };
     },
     enabled: !!activeProperty,
-    refetchInterval: 60000,
+    refetchInterval: 20000,
     staleTime: 30000,
     placeholderData: (prev) => prev, // mantém a página anterior visível enquanto carrega a nova
   });
@@ -293,9 +293,26 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
       return { total: total ?? 0, processed: proc ?? 0, unique: Number(uniqRes.data ?? 0) };
     },
     enabled: !!activeProperty,
-    refetchInterval: 60000,
+    refetchInterval: 20000,
     staleTime: 30000,
   });
+
+  // Tempo real: assina INSERT/UPDATE da propriedade ativa e atualiza na hora
+  useEffect(() => {
+    if (!activeProperty?.id) return;
+    const channel = supabase
+      .channel(`events-rt-${activeProperty.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "fb_events_raw", filter: `property_id=eq.${activeProperty.id}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ["fb-events-raw"] });
+          qc.invalidateQueries({ queryKey: ["fb-events-stats"] });
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [activeProperty?.id, qc]);
 
   const events = eventsData?.rows ?? [];
   const totalCount = eventsData?.totalCount ?? 0;
