@@ -23,6 +23,12 @@ Deno.serve(async (req: Request) => {
     (body.ip as string) ||
     null;
 
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // Geolocalização no SERVIDOR a partir do IP que será gravado — garante que
+  // IP e localização batem. Cache em geo_cache evita repetir chamadas à API.
+  const geo = await resolveGeo(supabase, ip);
+
   const row: Record<string, unknown> = {
     event_name:          body.event_name         ?? "PageView",
     event_time:          body.event_time         ?? Math.floor(Date.now() / 1000),
@@ -38,10 +44,10 @@ Deno.serve(async (req: Request) => {
     event_day_in_month:  body.event_day_in_month ?? null,
     event_month:         body.event_month        ?? null,
     event_time_interval: body.event_time_interval ?? null,
-    country:             body.country            ?? null,
-    state:               body.state              ?? null,
-    city:                body.city               ?? null,
-    zip:                 body.zip                ?? null,
+    country:             geo?.country ?? body.country ?? null,
+    state:               geo?.state   ?? body.state   ?? null,
+    city:                geo?.city    ?? body.city    ?? null,
+    zip:                 geo?.zip     ?? body.zip     ?? null,
     ip,
     em:                  body.em                 ?? null,
     ph:                  body.ph                 ?? null,
@@ -56,7 +62,6 @@ Deno.serve(async (req: Request) => {
     processed: false,
   };
 
-  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   const { data: inserted, error } = await supabase
     .from("fb_events_raw")
     .insert(row)
@@ -89,3 +94,42 @@ Deno.serve(async (req: Request) => {
 
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
 });
+
+// ─── Geolocalização server-side (com cache) ──────────────────────────────────
+type Geo = { country: string | null; state: string | null; city: string | null; zip: string | null };
+
+// deno-lint-ignore no-explicit-any
+async function resolveGeo(supabase: any, ip: string | null): Promise<Geo | null> {
+  if (!ip) return null;
+  // ignora IPs privados/loopback (não dá pra geolocalizar)
+  if (/^(10\.|127\.|0\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fe80:|fc|fd)/i.test(ip)) return null;
+
+  // 1) cache
+  try {
+    const { data: cached } = await supabase
+      .from("geo_cache").select("country,state,city,zip").eq("ip", ip).maybeSingle();
+    if (cached) return cached as Geo;
+  } catch (_) { /* segue para o lookup */ }
+
+  // 2) lookup na API
+  try {
+    const r = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    const g = await r.json();
+    if (g && g.success) {
+      const geo: Geo = {
+        country: ((g.country_code || "") as string).toLowerCase() || null,
+        state:   ((g.region_code  || "") as string).toLowerCase() || null,
+        city:    ((g.city || "") as string).toLowerCase().normalize("NFD")
+                   .replace(/[̀-ͯ]/g, "").replace(/[^a-z ]/g, "").trim() || null,
+        zip:     ((g.postal || "") as string).replace(/\D/g, "") || null,
+      };
+      // grava no cache (best-effort, não bloqueia em caso de corrida)
+      try { await supabase.from("geo_cache").insert({ ip, ...geo }); } catch (_) { /* ok */ }
+      return geo;
+    }
+  } catch (_) { /* falhou: usa fallback do client no row */ }
+
+  return null;
+}

@@ -62,6 +62,10 @@ const Settings = () => {
   const [deletePwd, setDeletePwd] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [revealOpen, setRevealOpen] = useState(false);
+  const [revealPwd, setRevealPwd] = useState("");
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
   const [form, setForm] = useState<Partial<Property>>({});
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedRef = useRef(false);
@@ -85,6 +89,7 @@ const Settings = () => {
     if (activeProperty) {
       loadedRef.current = false;
       setForm(activeProperty);
+      setShowToken(false);
       setTimeout(() => { loadedRef.current = true; }, 0);
     }
   }, [activeProperty?.id]);
@@ -180,6 +185,39 @@ const Settings = () => {
     setDeleteOpen(false);
     setDeleting(false);
     navigate("/");
+  }
+
+  // Clique no olho: se já visível, só esconde; se oculto, pede a senha
+  function onToggleToken() {
+    if (showToken) { setShowToken(false); return; }
+    setRevealPwd("");
+    setRevealError(null);
+    setRevealOpen(true);
+  }
+
+  async function confirmReveal() {
+    if (revealing) return;
+    setRevealing(true);
+    setRevealError(null);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.email) {
+      setRevealError("Sessão expirada. Recarregue a página.");
+      setRevealing(false);
+      return;
+    }
+    const { error: authErr } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: revealPwd,
+    });
+    if (authErr) {
+      setRevealError("Senha incorreta.");
+      setRevealing(false);
+      return;
+    }
+    setShowToken(true);
+    setRevealOpen(false);
+    setRevealing(false);
   }
 
 
@@ -334,8 +372,9 @@ const Settings = () => {
                       onChange={(e) => updateField("access_token", e.target.value)}
                     />
                     <button type="button"
+                      title={showToken ? "Ocultar token" : "Ver token (pede senha)"}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={() => setShowToken((v) => !v)}>
+                      onClick={onToggleToken}>
                       {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
@@ -522,6 +561,59 @@ const Settings = () => {
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 {deleting ? "Excluindo…" : "Excluir"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: ver token (pede senha) ────────────────────────────────── */}
+      {revealOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={() => { if (!revealing) setRevealOpen(false); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <Eye className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground leading-tight">Ver Access Token</h3>
+                <p className="text-[11px] text-muted-foreground">Confirme sua senha para exibir</p>
+              </div>
+            </div>
+
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="Sua senha"
+              value={revealPwd}
+              autoFocus
+              onChange={(e) => { setRevealPwd(e.target.value); setRevealError(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") confirmReveal(); }}
+              className="mt-4 w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            {revealError && <p className="text-xs text-destructive mt-2">{revealError}</p>}
+
+            <div className="flex gap-2 mt-4">
+              <Button
+                variant="outline" size="sm" className="flex-1"
+                disabled={revealing}
+                onClick={() => setRevealOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm" className="flex-1 gap-1.5"
+                disabled={revealing || !revealPwd}
+                onClick={confirmReveal}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                {revealing ? "Verificando…" : "Ver token"}
               </Button>
             </div>
           </div>
