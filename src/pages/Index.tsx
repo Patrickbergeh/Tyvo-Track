@@ -119,9 +119,9 @@ const PageCell = ({ title, url }: { title: string; url: string }) => {
   const clean = url ? stripUtm(url) : "";
   // src do preview leva um sinalizador para o tracker NÃO disparar pixel/evento
   const previewSrc = previewUrl(clean);
-  if (!url) return <span className="text-xs text-muted-foreground">{title}</span>;
+  if (!url) return <span title={title} className="block max-w-full truncate text-xs text-muted-foreground">{title}</span>;
   return (
-    <div className="relative inline-block max-w-[200px]" onMouseEnter={show} onMouseLeave={hide} onTouchStart={() => setOpen(v => !v)}>
+    <div className="relative w-[200px] max-w-full" onMouseEnter={show} onMouseLeave={hide} onTouchStart={() => setOpen(v => !v)}>
       <span className="text-primary flex items-center gap-1 cursor-pointer truncate text-xs">
         <Globe className="h-3 w-3 shrink-0" />
         <span className="truncate">{title}</span>
@@ -485,10 +485,10 @@ return (
                       <TableHead className="text-xs font-medium">Canal</TableHead>
                       <TableHead className="text-xs font-medium">Evento</TableHead>
                       <TableHead className="text-xs font-medium whitespace-nowrap">Data / Hora</TableHead>
-                      <TableHead className="text-xs font-medium">Página</TableHead>
-                      <TableHead className="text-xs font-medium min-w-[150px] text-center pl-5">Origem</TableHead>
-                      <TableHead className="text-xs font-medium min-w-[95px] text-center">Mídia</TableHead>
-                      <TableHead className="text-xs font-medium min-w-[140px] text-center">Campanha</TableHead>
+                      <TableHead className="text-xs font-medium w-[232px] min-w-[232px]">Página</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[160px] text-left">Origem</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[160px] text-left">Mídia</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[180px] text-left">Campanha</TableHead>
                       <TableHead className="text-xs font-medium">Dispositivo</TableHead>
                       <TableHead className="text-xs font-medium">IP</TableHead>
                       <TableHead className="text-xs font-medium">País</TableHead>
@@ -535,12 +535,12 @@ return (
                             </Badge>
                           </TableCell>
                           <TableCell className="py-2 text-xs text-muted-foreground whitespace-nowrap">{time}</TableCell>
-                          <TableCell className="py-2 max-w-[180px]">
+                          <TableCell className="py-2 w-[232px] min-w-[232px] max-w-[232px]">
                             <PageCell title={evt.page_title || "—"} url={evt.page_url || ""} />
                           </TableCell>
-                          <TableCell className="py-2 text-center pl-5"><UtmCell w={120} value={prettySource(evt.traffic_source ?? evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
-                          <TableCell className="py-2 text-center"><UtmCell w={90}  value={prettyMedium(evt.traffic_medium ?? evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
-                          <TableCell className="py-2 text-center"><UtmCell w={135} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
+                          <TableCell className="py-2 min-w-[160px] text-left"><UtmCell full value={prettySource(evt.traffic_source ?? evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
+                          <TableCell className="py-2 min-w-[160px] text-left"><UtmCell full value={prettyMedium(evt.traffic_medium ?? evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
+                          <TableCell className="py-2 min-w-[180px] text-left"><UtmCell w={148} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
                           <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">
                             {deviceType(evt.user_agent) ?? "—"}
                           </TableCell>
