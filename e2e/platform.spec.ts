@@ -102,3 +102,15 @@ test('postal display distinguishes incomplete provider data and preserves origin
  options.event={...options.event,zip:'11060450',city:'santos'};await page.reload();
  await expect(page.getByRole('cell',{name:'11060-450',exact:true})).toHaveCount(1);expect(state.errors).toEqual([]);
 });
+
+test('list shows the recorded organic exclusion and retains accepted historical status',async({page})=>{
+ const options:any={event:{id:pid,event_name:'PageView',created_at:'2026-09-11T11:00:00Z',page_url:'https://landing.example/?utm_source=instagram&utm_content=bio',page_title:'Visita da bio',traffic_source:'instagram',traffic_medium:'organic_social',processed:true,delivery_status:'skipped',fb_response:{skipped:true,reason:'excluded_bio',policy_version:1,blocked_before_capi:true,browser_suppressed:true}}};
+ await setup(page,options);await page.goto('/');
+ const status=page.getByRole('cell',{name:'Não enviado · bio',exact:true});await expect(status).toBeVisible();await expect(status).toHaveAttribute('title',/Nenhum envio CAPI foi realizado/);
+ options.event={...options.event,delivery_status:'accepted',fb_response:{events_received:1}};await page.reload();
+ await expect(page.getByRole('cell',{name:'Aceito',exact:true})).toBeVisible();await expect(page.getByRole('cell',{name:'Não enviado · bio',exact:true})).toHaveCount(0);
+});
+test('legacy browser status is not fabricated for a CAPI exclusion',async({page})=>{
+ await setup(page,{event:{id:pid,event_name:'Lead',created_at:'2026-09-11T11:00:00Z',page_url:'https://landing.example/',page_title:'ManyChat',processed:true,delivery_status:'skipped',fb_response:{skipped:true,reason:'excluded_manychat',policy_version:1,blocked_before_capi:true,browser_suppressed:null}}});await page.goto('/');
+ await expect(page.getByRole('cell',{name:'CAPI bloqueada · ManyChat',exact:true})).toHaveAttribute('title',/navegador não foi confirmado/);
+});

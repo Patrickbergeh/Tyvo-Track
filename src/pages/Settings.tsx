@@ -443,10 +443,14 @@ const Settings = () => {
                 </div>
 
                 <div className="rounded-lg border border-border p-3 space-y-2 text-xs">
-                  <p className="font-semibold">Separar Instagram orgânico de anúncios</p>
+                  <p className="font-semibold">Bloqueio de orgânico, bio e ManyChat no Meta</p>
+                  <p className="text-muted-foreground">Eventos identificados como orgânicos, bio ou ManyChat ficam registrados nesta plataforma e são bloqueados no Pixel e na CAPI pelo rastreador. A regra vale para todos os eventos dessas visitas.</p>
                   <p className="text-muted-foreground">No link da bio, acrescente estes parâmetros à URL de destino:</p>
                   <code className="block break-all">?utm_source=instagram&amp;utm_medium=organic_social&amp;utm_content=bio</code>
+                  <p className="text-muted-foreground">Nos links enviados pelo ManyChat, use:</p>
+                  <code className="block break-all">?utm_source=instagram&amp;utm_medium=organic_social&amp;utm_content=manychat</code>
                   <p className="text-muted-foreground">Nos anúncios, use utm_medium=paid_social. Se a URL já tiver ?, acrescente os parâmetros com &amp;. O fbclid pode aparecer nos dois casos e não comprova tráfego pago.</p>
+                  <p className="text-muted-foreground">Sem identificação de orgânico, bio ou ManyChat, o rastreador não consegue aplicar essa exclusão com certeza. Eventos já aceitos pelo Meta mantêm seu status real.</p>
                 </div>
 
                 {snippetMode === "url" && (

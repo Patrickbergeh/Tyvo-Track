@@ -1,7 +1,7 @@
 import { eventDate } from "@/lib/dates";
 import { previewUrl } from "@/lib/urls";
 import { useProperties, selectedProperty } from "@/lib/properties";
-import { metaAccepted, deliveryLabel } from "@/lib/delivery";
+import { metaAccepted, deliveryLabel, deliveryDescription, exclusionLabel } from "@/lib/delivery";
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -481,7 +481,7 @@ return (
                 <Table className="[&_th]:whitespace-nowrap">
                   <TableHeader>
                     <TableRow className="border-border hover:bg-transparent">
-                      <TableHead className="text-xs font-medium">Status</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[240px]">Status</TableHead>
                       <TableHead className="text-xs font-medium">Canal</TableHead>
                       <TableHead className="text-xs font-medium">Evento</TableHead>
                       <TableHead className="text-xs font-medium whitespace-nowrap">Data / Hora</TableHead>
@@ -507,14 +507,14 @@ return (
                       const postal = formatPostal(evt.zip, evt.country);
                       return (
                         <TableRow key={evt.id} className="border-border hover:bg-muted/30 transition-colors">
-                          <TableCell className="py-2">
+                          <TableCell className="py-2 whitespace-nowrap" title={deliveryDescription(evt)}>
                             {metaAccepted(evt.fb_response) ? (
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[hsl(var(--success))]">
                                 <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))]" />
                                 Aceito
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${exclusionLabel(evt) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
                                 <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
                                 {deliveryLabel(evt)}
                               </span>

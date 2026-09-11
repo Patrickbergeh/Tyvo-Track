@@ -58,9 +58,9 @@ export async function browser(url:string, opts:any={}) {
 }
 describe('Executed browser script', () => {
   test('PageView and ViewContent share exact IDs across browser and CAPI', async () => {
-    const b=await browser(base+'?utm_source=ig&utm_medium=social&fbclid=CaseSensitive');
+    const b=await browser(base+'?utm_source=ig&utm_medium=paid_social&fbclid=CaseSensitive');
     expect(b.requests).toHaveLength(2);
-    for(const request of b.requests){ const pixel=b.pixels.find(x=>x[0]==='trackSingle'&&x[2]===request.body.event_name);expect(pixel[4].eventID).toBe(request.body.event_id);expect(request.body.traffic_kind).toBe('organic');expect(request.body.fbc.endsWith('.CaseSensitive')).toBe(true); }
+    for(const request of b.requests){ const pixel=b.pixels.find(x=>x[0]==='trackSingle'&&x[2]===request.body.event_name);expect(pixel[4].eventID).toBe(request.body.event_id);expect(request.body.traffic_kind).toBe('paid');expect(request.body.fbc.endsWith('.CaseSensitive')).toBe(true); }
   });
   test('double inclusion does not duplicate events or listeners', async () => {
     const b=await browser(base);const submits=b.listeners.submit.length;vm.runInContext(b.script,b.ctx);await new Promise(r=>setTimeout(r,10));expect(b.requests).toHaveLength(2);expect(b.listeners.submit).toHaveLength(submits);

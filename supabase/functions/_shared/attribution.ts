@@ -20,7 +20,7 @@ export function classifyTraffic(input: AttributionInput) {
     if (value) utms[key] = value;
   }
   const source = (utms.utm_source || "").toLowerCase();
-  const medium = (utms.utm_medium || "").toLowerCase().replace(/[ -]+/g, "_");
+  const medium = (utms.utm_medium || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[ -]+/g, "_");
   const host = ref?.hostname.toLowerCase() || "";
   const instagram = /(^|\.)instagram\.com$/.test(host);
   const facebook = /(^|\.)(facebook\.com|fb\.com)$/.test(host);
@@ -31,7 +31,7 @@ export function classifyTraffic(input: AttributionInput) {
   let attribution_reason = "insufficient_evidence";
   if (["paid", "cpc", "cpm", "ppc", "paid_social", "paidsocial", "paid_search", "ads", "display", "retargeting"].includes(medium)) {
     traffic_kind = "paid"; attribution_reason = "explicit_paid_medium";
-  } else if (["social", "organic", "organic_social", "conteudo", "conteúdo", "content", "bio", "link_in_bio"].includes(medium)) {
+  } else if (["social", "organic", "organico", "organic_social", "organico_social", "conteudo", "content", "bio", "link_in_bio"].includes(medium)) {
     traffic_kind = "organic"; attribution_reason = "explicit_organic_medium";
   } else if (!medium && /^(bio|link_?in_?bio|link_?na_?bio)$/i.test(utms.utm_content || "")) {
     traffic_kind = "organic"; traffic_medium = "organic_social"; attribution_reason = "explicit_bio_content";

@@ -22,4 +22,6 @@ Os testes de navegador usam o Google Chrome instalado e simulam as chamadas ao S
 
 Use Configurações → Instalação para obter o script de cada propriedade e as orientações de UTMs da bio. Não trate fbclid como prova de tráfego pago.
 
+Eventos identificados como orgânicos, bio ou ManyChat ficam na plataforma e são bloqueados no Pixel/CAPI pelo rastreador. A lista mostra o motivo a partir do bloqueio registrado, preservando os aceites históricos. Veja as [regras e a validação do bloqueio](docs/bloqueio-organico-meta-2026-09-11.md).
+
 [Auditoria, correções, testes e limitações — 10/09/2026](docs/auditoria-meta-2026-09-10.md)

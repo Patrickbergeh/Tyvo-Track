@@ -1,5 +1,6 @@
 import { classifyTraffic } from "./attribution.ts";
 import { validMetaCookie, customData } from "./meta.ts";
+import { metaExclusionReason } from "./meta-policy.ts";
 
 export interface Config {
   propertyId:         string;
@@ -32,6 +33,8 @@ export function buildScript(c: Config): string {
   if(window.__tyvoLoaded[PID])return;
   window.__tyvoLoaded[PID]=true;
   var classifyTraffic=${classifyTraffic.toString()};
+  var metaExclusionReason=${metaExclusionReason.toString()};
+  function metaBlocked(){return metaExclusionReason(getUtms());}
   var validMetaCookie=${validMetaCookie.toString()};
   var sanitizeData=${customData.toString()};
 
@@ -89,7 +92,7 @@ export function buildScript(c: Config): string {
       if(!Object.keys(h).length)return;
       _am=h;
       // Re-init fbq com dados atualizados
-      if(BROWSER_PIXEL&&/^\\d{10,20}$/.test(FBPIX)&&window.fbq){
+      if(BROWSER_PIXEL&&!metaBlocked()&&/^\\d{10,20}$/.test(FBPIX)&&window.fbq){
         var ud={external_id:getExtId()};
         if(geoData){if(geoData.city)ud.ct=geoData.city;if(geoData.state)ud.st=geoData.state;if(geoData.zip)ud.zp=geoData.zip;if(geoData.country)ud.country=geoData.country;}
         for(var j in _am)ud[j]=_am[j];
@@ -140,7 +143,9 @@ export function buildScript(c: Config): string {
     var key='_tk_attribution_'+PID,old=_attribution?{at:_attributionAt,data:_attribution}:null,external=false;
     try{external=!_attributionPage&&!!ref&&new URL(ref).origin!==window.location.origin;}catch(e){}
     try{old=JSON.parse(sessionStorage.getItem(key)||'null')||old;}catch(e){}
-    var fresh=['utm_source','utm_medium','utm_campaign','utm_content','utm_term','utm_id','fbclid'].some(function(k){return sp.has(k);});
+    var previousClick='';try{previousClick=old&&old.data?new URL(old.data.landing_url).searchParams.get('fbclid')||'':'';}catch(e){}
+    var click=sp.get('fbclid')||'';
+    var fresh=['utm_source','utm_medium','utm_campaign','utm_content','utm_term','utm_id'].some(function(k){return sp.has(k);})||(!!click&&click!==previousClick);
     if(!fresh&&!external&&old&&old.data&&typeof old.data==='object'&&!Array.isArray(old.data)&&typeof old.at==='number'&&Date.now()-old.at>=0&&Date.now()-old.at<1800000){_attribution=old.data;}
     else{
       _attribution=classifyTraffic({page_url:page,referrer:ref,user_agent:navigator.userAgent});
@@ -162,6 +167,7 @@ export function buildScript(c: Config): string {
     if(fbp)p.fbp=fbp;if(fbc)p.fbc=fbc;
     if(geoData){if(geoData.ip)p.ip=geoData.ip;if(geoData.country)p.country=geoData.country;if(geoData.state)p.state=geoData.state;if(geoData.city)p.city=geoData.city;if(geoData.zip)p.zip=geoData.zip;}
     var um=getUtms();for(var uk in um)p[uk]=um[uk];
+    p.meta_policy_version=1;p.meta_pixel_suppressed=!!metaBlocked();
     p.custom_data=params||{};
     var am=matching||_am;for(var ak in am)p[ak]=am[ak];
     var body=JSON.stringify(p);
@@ -180,21 +186,26 @@ export function buildScript(c: Config): string {
   /* ── API pública ── */
   window._tracker={send:function(name,params){if(typeof name!=='string'||! /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name))return null;var p=sanitizeData(params||{});if(name==='Purchase'&&(typeof p.value!=='number'||!p.currency)){console.error('[Tracker] Purchase requer valor e moeda válidos');return null;}var id=evtId();pixelEvent(name,p,id);sendCAPI(name,id,p);return id;}};
   window._trackerSendEvent=window._tracker.send;
-  function pixelEvent(name,p,id){try{if(BROWSER_PIXEL&&window.fbq){var standard=['PageView','ViewContent','Lead','AddToCart','AddToWishlist','InitiateCheckout','AddPaymentInfo','Purchase','CompleteRegistration','Search','Contact','Subscribe','StartTrial','Schedule','SubmitApplication','FindLocation','CustomizeProduct','Donate'];window.fbq(standard.indexOf(name)>=0?'trackSingle':'trackSingleCustom',FBPIX,name,p,{eventID:id});}}catch(e){console.warn('[Tracker] Pixel indisponível');}}
+  var _pixelInitialized=false;
+  function pixelReady(){
+    if(!BROWSER_PIXEL||metaBlocked()||!/^\\d{10,20}$/.test(FBPIX))return false;
+    if(_pixelInitialized&&window.fbq)return true;
+    try{
+      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+      var ud={external_id:getExtId()};for(var k in _am)if(_am[k])ud[k]=_am[k];
+      window.fbq('init',FBPIX,ud);_pixelInitialized=true;return true;
+    }catch(e){console.warn('[Tracker] Pixel indisponível');return false;}
+  }
+  function pixelEvent(name,p,id){try{if(pixelReady()&&window.fbq){var standard=['PageView','ViewContent','Lead','AddToCart','AddToWishlist','InitiateCheckout','AddPaymentInfo','Purchase','CompleteRegistration','Search','Contact','Subscribe','StartTrial','Schedule','SubmitApplication','FindLocation','CustomizeProduct','Donate'];window.fbq(standard.indexOf(name)>=0?'trackSingle':'trackSingleCustom',FBPIX,name,p,{eventID:id});}}catch(e){console.warn('[Tracker] Pixel indisponível');}}
 
   /* ── Disparo principal ── */
   function fire(){
     if(!(/^\\d{10,20}$/.test(FBPIX))){console.error('[Tracker] Pixel ID inválido:',FBPIX,'— configure um ID numérico em Settings.');BROWSER_PIXEL=false;}
     var fbp=getOrCreateFbp();getFbc();
-    var ud={external_id:getExtId()};
-    if(geoData){if(geoData.city)ud.ct=geoData.city;if(geoData.state)ud.st=geoData.state;if(geoData.zip)ud.zp=geoData.zip;if(geoData.country)ud.country=geoData.country;}
     var tf=timeFields();
     var cd={currency:'BRL',event_day:tf.event_day,event_month:tf.event_month,event_day_in_month:tf.event_day_in_month,event_time_interval:tf.event_time_interval};
     var idPV=evtId(),idVC=evtId();
-    if(BROWSER_PIXEL){
-      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-      try{window.fbq('init',FBPIX,ud);}catch(e){console.warn('[Tracker] Pixel indisponível');}
-    }
+    pixelReady();
     if(wasFired())return;
     markFired();
     var _vcd={currency:'BRL',content_name:document.title||'',event_day:tf.event_day,event_month:tf.event_month,event_day_in_month:tf.event_day_in_month,event_time_interval:tf.event_time_interval};

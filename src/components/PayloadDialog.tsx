@@ -1,4 +1,4 @@
-import { metaAccepted, deliveryLabel } from "@/lib/delivery";
+import { metaAccepted, deliveryLabel, deliveryDescription, exclusionLabel } from "@/lib/delivery";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +63,8 @@ export const PayloadDialog = ({
     page_url: event.page_url, event_time: event.event_time, fbp: event.fbp, fbc: event.fbc,
     traffic_source: event.traffic_source, traffic_medium: event.traffic_medium,
     custom_data: event.custom_data,
+    delivery_status: event.delivery_status,
+    ...(exclusionLabel(event) ? { meta_delivery: event.fb_response } : {}),
     note: "Dados coletados; recebimento e deduplicação do Pixel não verificados",
   };
 
@@ -146,6 +148,7 @@ export const PayloadDialog = ({
             </Popover>
           </DialogTitle>
         </DialogHeader>
+        {exclusionLabel(event) && <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">{deliveryDescription(event)}</p>}
 
         <div className="space-y-4 mt-1">
 

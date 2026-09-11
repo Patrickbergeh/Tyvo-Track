@@ -1,6 +1,6 @@
 import { databaseDate } from "@/lib/dates";
 import { useProperties, selectedProperty } from "@/lib/properties";
-import { metaAccepted, deliveryLabel } from "@/lib/delivery";
+import { metaAccepted, deliveryLabel, deliveryDescription } from "@/lib/delivery";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -98,7 +98,7 @@ function EventCard({ ev }: { ev: LiveEvent }) {
         }`}>
           {ev.event_name}
         </span>
-        <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+        <span title={deliveryDescription(ev)} className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
           metaAccepted(ev.fb_response)
             ? "bg-emerald-500/10 text-emerald-400"
             : "bg-yellow-500/10 text-yellow-400"

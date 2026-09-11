@@ -1,5 +1,6 @@
 import { readObject, RequestError, isUuid } from "../_shared/http.ts";
 import { normalizePostal } from "../_shared/geo.ts";
+import { metaExclusionReason } from "../_shared/meta-policy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { classifyTraffic } from "../_shared/attribution.ts";
 import { customData, eventTimestamp, validMetaCookie } from "../_shared/meta.ts";
@@ -36,6 +37,9 @@ Deno.serve(async (req: Request) => {
     // Never trust a JSON override for the transport IP.
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || null;
     const userAgent = text(req.headers.get("user-agent") || body.user_agent, 2048);
+    const attribution = classifyTraffic({ ...body, user_agent: userAgent });
+    const exclusion = metaExclusionReason({ ...body, user_agent: userAgent });
+    const skipReason = exclusion || (property.capi_enabled === false ? "capi_disabled" : null);
     const geo = await resolveGeo(supabase, ip);
     const row: Record<string, unknown> = {
       property_id: property.id, event_name: body.event_name, event_id: body.event_id,
@@ -44,9 +48,11 @@ Deno.serve(async (req: Request) => {
       fbp: validMetaCookie(body.fbp, "fbp") || null, fbc: validMetaCookie(body.fbc, "fbc") || null,
       country: geo?.country || null, state: geo?.state || null, city: geo?.city || null, zip: geo?.zip || null, lat: geo?.lat ?? null, lon: geo?.lon ?? null,
       referrer: text(body.referrer, 8192), landing_url: text(body.landing_url, 8192),
-      ...classifyTraffic({ ...body, user_agent: userAgent }), custom_data: customData(body.custom_data), ingest_key: ingestKey,
-      processed: property.capi_enabled === false, delivery_status: property.capi_enabled === false ? "skipped" : "pending",
-      ...(property.capi_enabled === false ? { fb_response: { skipped: true, reason: "capi_disabled" } } : {}),
+      ...attribution, custom_data: customData(body.custom_data), ingest_key: ingestKey,
+      processed: !!skipReason, delivery_status: skipReason ? "skipped" : "pending",
+      ...(skipReason ? { fb_response: { skipped: true, reason: skipReason, blocked_before_capi: true,
+        ...(exclusion ? { policy_version: 1, browser_suppressed: body.meta_policy_version === 1 && body.meta_pixel_suppressed === true ? true : null } : {}),
+      } } : {}),
     };
     for (const key of ["em", "ph", "fn", "ln"]) {
       if (typeof body[key] === "string" && /^[a-f0-9]{64}$/i.test(body[key])) row[key] = body[key].toLowerCase();
@@ -56,7 +62,7 @@ Deno.serve(async (req: Request) => {
     const { data: inserted, error } = await supabase.from("fb_events_raw").insert(row).select("id").single();
     if (error?.code === "23505") return json({ ok: true, duplicate: true });
     if (error) throw error;
-    if (inserted && property.capi_enabled !== false) {
+    if (inserted && !skipReason) {
       const trigger = fetch(`${SUPABASE_URL}/functions/v1/process-fb-event`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
         body: JSON.stringify({ id: inserted.id }), signal: AbortSignal.timeout(25000),
@@ -65,7 +71,7 @@ Deno.serve(async (req: Request) => {
       if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(trigger);
       else await trigger;
     }
-    return json({ ok: true });
+    return json({ ok: true, ...(skipReason ? { meta_delivery: "skipped", reason: skipReason } : {}) });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.message }, error.status);
     console.error("track_failed", (error as { code?: string })?.code || "internal_error");

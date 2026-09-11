@@ -1,5 +1,6 @@
 import * as http from "../supabase/functions/_shared/http";
 import * as geo from "../supabase/functions/_shared/geo";
+import * as policy from "../supabase/functions/_shared/meta-policy";
 import { test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -19,7 +20,7 @@ async function endpoint(name:string,options:any={}) {
   }};
   const source=readFileSync('supabase/functions/'+name+'/index.ts','utf8').replace(/^import .*;\n/gm,'');
   const js=new Bun.Transpiler({loader:'ts'}).transformSync(source);
-  const context=vm.createContext({...meta,...auth,...http,...geo,classifyTraffic,createClient:()=>client,Deno:{env:{get:(key:string)=>key==='SUPABASE_URL'?'https://db.example':'service-test-key'},serve:(fn:any)=>{handler=fn;}},EdgeRuntime:{waitUntil:()=>{}},Request,Response,URL,AbortSignal,TextEncoder,TextDecoder,crypto:webcrypto,console,fetch:async(url:string,init:any)=>{calls.push({url,init});if(options.networkFailure)throw Error('offline');if(url.startsWith('https://ipwho.is/')&&options.geoBody)return new Response(JSON.stringify(options.geoBody));return new Response(JSON.stringify(options.metaBody??{events_received:1}),{status:options.metaStatus??200});}});
+  const context=vm.createContext({...meta,...auth,...http,...geo,...policy,classifyTraffic,createClient:()=>client,Deno:{env:{get:(key:string)=>key==='SUPABASE_URL'?'https://db.example':'service-test-key'},serve:(fn:any)=>{handler=fn;}},EdgeRuntime:{waitUntil:()=>{}},Request,Response,URL,AbortSignal,TextEncoder,TextDecoder,crypto:webcrypto,console,fetch:async(url:string,init:any)=>{calls.push({url,init});if(options.networkFailure)throw Error('offline');if(url.startsWith('https://ipwho.is/')&&options.geoBody)return new Response(JSON.stringify(options.geoBody));return new Response(JSON.stringify(options.metaBody??{events_received:1}),{status:options.metaStatus??200});}});
   vm.runInContext(js,context);
   return {handler,updates,inserts,calls};
 }
@@ -68,4 +69,25 @@ test('processor omits invalid legacy CEP without losing other matching fields or
 test('processor hashes all eight digits of a valid Brazilian CEP',async()=>{
  const e=await endpoint('process-fb-event',{events:[{...event,country:'br',zip:'01002-000'}]});await e.handler(request({}));
  expect(e.updates[0].payload_sent.data[0].user_data.zp).toEqual(await meta.hashIdentifier('01002000','zp'));
+});
+
+test('excluded events are stored terminally with the actual rule and never trigger the processor',async()=>{
+ for(const [query,reason] of [['utm_source=instagram&utm_medium=organic_social','excluded_organic'],['utm_source=instagram&utm_content=bio','excluded_bio'],['utm_source=manychat','excluded_manychat']]){
+  const e=await endpoint('track');const res=await e.handler(request({...event,page_url:'https://shop.example/?'+query,meta_policy_version:1,meta_pixel_suppressed:true}));
+  expect(res.status).toBe(200);expect(e.inserts[0]).toMatchObject({processed:true,delivery_status:'skipped',fb_response:{reason,skipped:true,blocked_before_capi:true,browser_suppressed:true}});expect(e.calls).toHaveLength(0);
+ }
+});
+test('old loaders are excluded from CAPI without claiming browser suppression',async()=>{
+ const e=await endpoint('track');await e.handler(request({...event,page_url:'https://shop.example/?utm_content=bio'}));
+ expect(e.inserts[0].fb_response.browser_suppressed).toBeNull();expect(e.calls).toHaveLength(0);
+});
+test('processor blocks pending legacy and retry organic events before any Meta request',async()=>{
+ for(const attempt of [1,3]){
+  const e=await endpoint('process-fb-event',{events:[{...event,page_url:'https://shop.example/?utm_medium=social',attempt_count:attempt,...(attempt>1?{payload_sent:{data:[]},fb_response:{error:{message:'prior timeout'}}}:{})}]});
+  await e.handler(request({}));expect(e.calls).toHaveLength(0);expect(e.updates[0]).toMatchObject({processed:true,delivery_status:'skipped',next_retry_at:null,fb_response:{reason:'excluded_organic',blocked_before_capi:attempt===1,browser_suppressed:null}});
+ }
+});
+test('paid URLs override stale or caller-provided organic flags and still trigger delivery',async()=>{
+ const e=await endpoint('track');await e.handler(request({...event,page_url:'https://shop.example/?utm_medium=paid_social',utm_content:'bio',traffic_kind:'organic',meta_pixel_suppressed:true}));
+ expect(e.inserts[0]).toMatchObject({processed:false,delivery_status:'pending',traffic_kind:'paid'});expect(e.calls.some(c=>c.url.endsWith('/process-fb-event'))).toBe(true);
 });

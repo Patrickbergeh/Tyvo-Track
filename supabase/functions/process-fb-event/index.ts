@@ -1,5 +1,6 @@
 import { readObject, RequestError, isUuid } from "../_shared/http.ts";
 import { normalizePostal } from "../_shared/geo.ts";
+import { metaExclusionReason } from "../_shared/meta-policy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorized, FUNCTION_CORS } from "../_shared/auth.ts";
 import { customData, eventTimestamp, hashIdentifier, metaAccepted, retryableMeta, validMetaCookie } from "../_shared/meta.ts";
@@ -41,6 +42,15 @@ Deno.serve(async (req: Request) => {
       await Promise.all(events.slice(i, i + 5).map(async (evt: any) => {
         let payload: Record<string, unknown> | undefined;
         try {
+          const exclusion = metaExclusionReason(evt);
+          if (exclusion) {
+            await finish(evt, "skipped", { skipped: true, reason: exclusion, policy_version: 1,
+              blocked_before_capi: !evt.payload_sent && evt.attempt_count <= 1,
+              browser_suppressed: null,
+              ...(evt.payload_sent ? { previous_response: evt.fb_response } : {}),
+            });
+            return;
+          }
           const prop = properties?.find((p: any) => p.id === evt.property_id);
           if (!prop || !prop.tracking_enabled || !prop.capi_enabled || !prop.access_token || !/^\d{10,20}$/.test(prop.pixel_id)) {
             const reason = !prop ? "missing_property" : !prop.tracking_enabled ? "tracking_disabled" : !prop.capi_enabled ? "capi_disabled" : "invalid_pixel_configuration";
