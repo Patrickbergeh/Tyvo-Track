@@ -1,4 +1,5 @@
 import * as http from "../supabase/functions/_shared/http";
+import * as geo from "../supabase/functions/_shared/geo";
 import { test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -13,12 +14,12 @@ async function endpoint(name:string,options:any={}) {
   let handler:any;const updates:any[]=[],inserts:any[]=[],calls:any[]=[];
   const client={auth:{getUser:async()=>({data:{user:null},error:true})},rpc:async()=>({data:options.events??[event]}),from:(table:string)=>{
     let action='select',patch:any;
-    const result=()=>({data:table==='properties'?options.property===null?null:(options.property||property):action==='insert'?{id:event.id}:table==='geo_cache'?null:[],error:options.dbError||null});
+    const result=()=>({data:table==='properties'?options.property===null?null:(options.property||property):action==='insert'?{id:event.id}:table==='geo_cache'?options.geoCache??null:[],error:options.dbError||null});
     const chain:any={select:()=>chain,gte:()=>chain,eq:()=>chain,in:async()=>({data:[options.property||property]}),limit:async()=>({data:options.duplicate?[{id:event.id}]:[]}),insert:(row:any)=>{action='insert';inserts.push(row);return chain;},update:(row:any)=>{action='update';patch=row;updates.push(row);return chain;},single:async()=>result(),maybeSingle:async()=>result(),then:(resolve:any,reject:any)=>Promise.resolve(result()).then(resolve,reject)};return chain;
   }};
   const source=readFileSync('supabase/functions/'+name+'/index.ts','utf8').replace(/^import .*;\n/gm,'');
   const js=new Bun.Transpiler({loader:'ts'}).transformSync(source);
-  const context=vm.createContext({...meta,...auth,...http,classifyTraffic,createClient:()=>client,Deno:{env:{get:(key:string)=>key==='SUPABASE_URL'?'https://db.example':'service-test-key'},serve:(fn:any)=>{handler=fn;}},EdgeRuntime:{waitUntil:()=>{}},Request,Response,URL,AbortSignal,TextEncoder,TextDecoder,crypto:webcrypto,console,fetch:async(url:string,init:any)=>{calls.push({url,init});if(options.networkFailure)throw Error('offline');return new Response(JSON.stringify(options.metaBody??{events_received:1}),{status:options.metaStatus??200});}});
+  const context=vm.createContext({...meta,...auth,...http,...geo,classifyTraffic,createClient:()=>client,Deno:{env:{get:(key:string)=>key==='SUPABASE_URL'?'https://db.example':'service-test-key'},serve:(fn:any)=>{handler=fn;}},EdgeRuntime:{waitUntil:()=>{}},Request,Response,URL,AbortSignal,TextEncoder,TextDecoder,crypto:webcrypto,console,fetch:async(url:string,init:any)=>{calls.push({url,init});if(options.networkFailure)throw Error('offline');if(url.startsWith('https://ipwho.is/')&&options.geoBody)return new Response(JSON.stringify(options.geoBody));return new Response(JSON.stringify(options.metaBody??{events_received:1}),{status:options.metaStatus??200});}});
   vm.runInContext(js,context);
   return {handler,updates,inserts,calls};
 }
@@ -45,4 +46,26 @@ test('processor returns 400 for primitive or malformed request shape',async()=>{
  for(const body of [null,[],123,{propertyId:{}},{ids:[]},{id:'00000000----------------------------'}]){
   const e=await endpoint('process-fb-event');expect((await e.handler(request(body))).status).toBe(400);expect(e.calls).toHaveLength(0);
  }
+});
+
+test('ingestion rejects incomplete Brazilian postal codes from cache and fresh provider results',async()=>{
+ for(const options of [{geoCache:{country:'br',state:'sp',city:'sao paulo',zip:'1002',lat:-23.5,lon:-46.6}},{geoBody:{success:true,country_code:'BR',region_code:'SP',city:'Sao Paulo',postal:'1002',latitude:-23.5,longitude:-46.6}}]){
+  const e=await endpoint('track',options),req=request({...event});req.headers.set('x-forwarded-for','203.0.113.8');
+  expect((await e.handler(req)).status).toBe(200);expect(e.inserts[0]).toMatchObject({country:'br',state:'sp',city:'sao paulo',zip:null});
+ }
+});
+test('ingestion preserves complete leading-zero and international postal codes',async()=>{
+ for(const [country,postal,expected] of [['BR','01002-000','01002000'],['CA','K1A 0B1','K1A 0B1']]){
+  const e=await endpoint('track',{geoBody:{success:true,country_code:country,region_code:'SP',city:'Test City',postal,latitude:0,longitude:0}}),req=request({...event});req.headers.set('x-forwarded-for','203.0.113.8');
+  expect((await e.handler(req)).status).toBe(200);expect(e.inserts[0].zip).toBe(expected);
+ }
+});
+test('processor omits invalid legacy CEP without losing other matching fields or modifying the source event',async()=>{
+ const source={...event,country:'br',state:'sp',zip:'1002',external_id:'visitor'},e=await endpoint('process-fb-event',{events:[source]});await e.handler(request({}));
+ const data=e.updates[0].payload_sent.data[0].user_data;
+ expect(data.zp).toBeUndefined();expect(data.country).toBeTruthy();expect(data.external_id).toBeTruthy();expect(source.zip).toBe('1002');expect(e.updates[0].zip).toBeUndefined();
+});
+test('processor hashes all eight digits of a valid Brazilian CEP',async()=>{
+ const e=await endpoint('process-fb-event',{events:[{...event,country:'br',zip:'01002-000'}]});await e.handler(request({}));
+ expect(e.updates[0].payload_sent.data[0].user_data.zp).toEqual(await meta.hashIdentifier('01002000','zp'));
 });

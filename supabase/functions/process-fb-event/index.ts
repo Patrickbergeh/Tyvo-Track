@@ -1,4 +1,5 @@
 import { readObject, RequestError, isUuid } from "../_shared/http.ts";
+import { normalizePostal } from "../_shared/geo.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorized, FUNCTION_CORS } from "../_shared/auth.ts";
 import { customData, eventTimestamp, hashIdentifier, metaAccepted, retryableMeta, validMetaCookie } from "../_shared/meta.ts";
@@ -61,7 +62,7 @@ Deno.serve(async (req: Request) => {
             if (value) userData[kind] = value;
           }
           await Promise.all(Object.entries({ external_id: "external_id", city: "ct", state: "st", zip: "zp", country: "country", em: "em", ph: "ph", fn: "fn", ln: "ln" }).map(async ([column, field]) => {
-            const hash = await hashIdentifier(evt[column], field);
+            const hash = await hashIdentifier(column === "zip" ? normalizePostal(evt.zip, evt.country) : evt[column], field);
             if (hash) userData[field] = hash;
           }));
           const cd = customData(evt.custom_data);

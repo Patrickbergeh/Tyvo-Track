@@ -1,3 +1,5 @@
+export { formatPostal } from "../../supabase/functions/_shared/geo";
+
 // Normaliza o nome do estado para exibição. Regra única que cobre os 27 estados
 // brasileiros independentemente de como o dado chegou: sigla (sp, df…), nome em
 // português (com ou sem acento, em qualquer caixa) ou variação em inglês que os

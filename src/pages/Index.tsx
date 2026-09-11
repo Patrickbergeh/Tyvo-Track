@@ -25,7 +25,7 @@ import { NewWorkspaceDialog } from "@/components/NewWorkspaceDialog";
 import { VisitorMap } from "@/components/VisitorMap";
 import { DateRangeFilter, getPresetRange, type DatePreset, type DateRange } from "@/components/DateRangeFilter";
 import { prettySource, prettyMedium } from "@/lib/utm";
-import { cleanState } from "@/lib/geo";
+import { cleanState, formatPostal } from "@/lib/geo";
 
 const PAGE_SIZE = 50;
 
@@ -478,7 +478,7 @@ return (
           ) : (
             <>
               <div className="overflow-auto flex-1 min-h-0">
-                <Table>
+                <Table className="[&_th]:whitespace-nowrap">
                   <TableHeader>
                     <TableRow className="border-border hover:bg-transparent">
                       <TableHead className="text-xs font-medium">Status</TableHead>
@@ -492,11 +492,11 @@ return (
                       <TableHead className="text-xs font-medium">Dispositivo</TableHead>
                       <TableHead className="text-xs font-medium">IP</TableHead>
                       <TableHead className="text-xs font-medium">País</TableHead>
-                      <TableHead className="text-xs font-medium">Estado</TableHead>
-                      <TableHead className="text-xs font-medium">Cidade</TableHead>
-                      <TableHead className="text-xs font-medium">CEP</TableHead>
-                      <TableHead className="text-xs font-medium">Event ID</TableHead>
-                      <TableHead className="text-xs font-medium">External ID</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[160px]" title="Localização aproximada pelo IP">Estado</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[180px]" title="Localização aproximada pelo IP">Cidade</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[128px]" title="CEP estimado pelo IP; não confirma o endereço do visitante">CEP</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[150px]">Event ID</TableHead>
+                      <TableHead className="text-xs font-medium min-w-[140px]">External ID</TableHead>
                       <TableHead className="w-8" />
                     </TableRow>
                   </TableHeader>
@@ -504,6 +504,7 @@ return (
                     {events.map(evt => {
                       const date = eventDate(evt);
                       const time = date ? format(date, "dd/MM/yy HH:mm:ss", { locale: ptBR }) : "—";
+                      const postal = formatPostal(evt.zip, evt.country);
                       return (
                         <TableRow key={evt.id} className="border-border hover:bg-muted/30 transition-colors">
                           <TableCell className="py-2">
@@ -544,17 +545,17 @@ return (
                           <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">
                             {deviceType(evt.user_agent) ?? "—"}
                           </TableCell>
-                          <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.ip || "—"}</TableCell>
+                          <TableCell className="py-2 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{evt.ip || "—"}</TableCell>
                           <TableCell className="py-2"><Flag code={evt.country} /></TableCell>
-                          <TableCell className="py-2 text-[11px] text-muted-foreground">{cleanState(evt.state)}</TableCell>
-                          <TableCell className="py-2 text-[11px] text-muted-foreground capitalize">{evt.city || "—"}</TableCell>
-                          <TableCell className="py-2 text-[11px] font-mono text-muted-foreground">{evt.zip || "—"}</TableCell>
-                          <TableCell className="py-2">
-                            <code className="text-[10px] font-mono text-primary bg-primary/8 px-1.5 py-0.5 rounded">
+                          <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">{cleanState(evt.state)}</TableCell>
+                          <TableCell className="py-2 text-[11px] text-muted-foreground capitalize whitespace-nowrap">{evt.city || "—"}</TableCell>
+                          <TableCell className="py-2 text-[11px] font-mono text-muted-foreground whitespace-nowrap" title={evt.zip && !postal ? `CEP incompleto ou inválido na origem: ${evt.zip}` : "CEP estimado pela localização do IP"}>{postal || (evt.zip ? "Indisponível" : "—")}</TableCell>
+                          <TableCell className="py-2 whitespace-nowrap">
+                            <code title={evt.event_id || undefined} className="text-[10px] font-mono text-primary bg-primary/8 px-1.5 py-0.5 rounded">
                               {evt.event_id ? evt.event_id.slice(0, 12) + "…" : "—"}
                             </code>
                           </TableCell>
-                          <TableCell className="py-2 text-[11px] font-mono text-muted-foreground max-w-[80px] truncate">{evt.external_id ? evt.external_id.slice(0, 8) + "…" : "—"}</TableCell>
+                          <TableCell title={evt.external_id || undefined} className="py-2 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{evt.external_id ? evt.external_id.slice(0, 8) + "…" : "—"}</TableCell>
                           <TableCell className="py-2">
                             <button onClick={() => openPayload(evt)}
                               className="h-6 w-6 flex items-center justify-center rounded hover:bg-primary/10 transition-colors text-muted-foreground hover:text-primary">

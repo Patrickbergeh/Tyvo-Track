@@ -1,4 +1,5 @@
 import { readObject, RequestError, isUuid } from "../_shared/http.ts";
+import { normalizePostal } from "../_shared/geo.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { classifyTraffic } from "../_shared/attribution.ts";
 import { customData, eventTimestamp, validMetaCookie } from "../_shared/meta.ts";
@@ -85,7 +86,7 @@ async function resolveGeo(supabase: any, ip: string | null): Promise<Geo | null>
   try {
     const { data: cached } = await supabase
       .from("geo_cache").select("country,state,city,zip,lat,lon").eq("ip", ip).gte("created_at", new Date(Date.now() - 86400000).toISOString()).maybeSingle();
-    if (cached && cached.lat != null && cached.lon != null) return cached as Geo;
+    if (cached && cached.lat != null && cached.lon != null) return { ...cached, zip: normalizePostal(cached.zip, cached.country) } as Geo;
   } catch (_) { /* segue para o lookup */ }
 
   // 2) lookup na API
@@ -94,7 +95,7 @@ async function resolveGeo(supabase: any, ip: string | null): Promise<Geo | null>
       signal: AbortSignal.timeout(2500),
     });
     const g = await r.json();
-    if (g && g.success) {
+    if (r.ok && g && g.success) {
       const geo: Geo = {
         country: ((g.country_code || "") as string).toLowerCase() || null,
         state:   ((g.region_code  || "") as string).toLowerCase() || null,
@@ -102,10 +103,12 @@ async function resolveGeo(supabase: any, ip: string | null): Promise<Geo | null>
                    .replace(/[̀-ͯ]/g, "").replace(/[^a-z ]/g, "").trim() || null,
         lat: typeof g.latitude === "number" ? g.latitude : null,
         lon: typeof g.longitude === "number" ? g.longitude : null,
-        zip:     ((g.postal || "") as string).replace(/\D/g, "") || null,
+        zip:     normalizePostal(g.postal, g.country_code),
       };
       // grava no cache (best-effort, não bloqueia em caso de corrida)
-      try { await supabase.from("geo_cache").upsert({ ip, ...geo, created_at: new Date().toISOString() }, { onConflict: "ip" }); } catch (_) { /* ok */ }
+      // Keep the provider's original postal value in the cache for inspection.
+      // Both fresh responses and cache reads are validated before event ingestion.
+      try { await supabase.from("geo_cache").upsert({ ip, ...geo, zip: typeof g.postal === "string" ? g.postal : null, created_at: new Date().toISOString() }, { onConflict: "ip" }); } catch (_) { /* ok */ }
       return geo;
     }
   } catch (_) { /* geo indisponível: mantém os campos ausentes */ }

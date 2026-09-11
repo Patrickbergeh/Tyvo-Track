@@ -90,3 +90,15 @@ test('sign out failure is visible and allows retry',async({page})=>{
  await expect(page.getByRole('alert')).toContainText('Não foi possível sair');await expect(page.getByRole('button',{name:'Sair',exact:true})).toBeEnabled();
  options.logoutFailure=false;await page.getByRole('button',{name:'Sair',exact:true}).click();await expect(page.getByRole('button',{name:'Entrar',exact:true})).toBeVisible();
 });
+
+test('postal display distinguishes incomplete provider data and preserves original identifiers',async({page},testInfo)=>{
+ const options:any={event:{id:pid,event_name:'PageView',created_at:'2026-09-11T11:00:00Z',page_url:'https://landing.example/',page_title:'Yvenon | Cosméticos e tecnologia',country:'br',state:'sp',city:'sao paulo',zip:'1002',event_id:'ev_0123456789abcdef',external_id:'uid_complete_visitor_identifier',processed:true,fb_response:{events_received:1}}};
+ const state=await setup(page,options);await page.goto('/');
+ await expect(page.getByRole('cell',{name:'Indisponível',exact:true})).toHaveAttribute('title','CEP incompleto ou inválido na origem: 1002');
+ await expect(page.locator('code[title="ev_0123456789abcdef"]')).toHaveText('ev_012345678…');
+ await expect(page.locator('td[title="uid_complete_visitor_identifier"]')).toHaveCount(1);
+ await page.getByRole('columnheader',{name:'External ID',exact:true}).scrollIntoViewIfNeeded();
+ await page.screenshot({path:testInfo.outputPath('postal-columns.png')});
+ options.event={...options.event,zip:'11060450',city:'santos'};await page.reload();
+ await expect(page.getByRole('cell',{name:'11060-450',exact:true})).toHaveCount(1);expect(state.errors).toEqual([]);
+});

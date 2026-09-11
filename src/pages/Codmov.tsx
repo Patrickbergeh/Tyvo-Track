@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { cleanState } from "@/lib/geo";
+import { cleanState, formatPostal } from "@/lib/geo";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface LiveEvent {
@@ -84,7 +84,7 @@ function EventCard({ ev }: { ev: LiveEvent }) {
     resolveName(ev.country, "country"),
     cleanState(ev.state),
     resolveName(ev.city, "city"),
-    ev.zip || null,
+    formatPostal(ev.zip, ev.country),
   ].filter((v) => v && v !== "—").join(" · ");
 
   return (
