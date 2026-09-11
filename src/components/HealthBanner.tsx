@@ -14,13 +14,14 @@ export function HealthBanner() {
     try {
       // Eventos parados há mais de 20 min (process-fb-event fora do ar)
       const cutoff = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-      const { data: stale } = await supabase
+      const { data: stale, error: staleError } = await supabase
         .from("fb_events_raw")
         .select("id")
         .eq("processed", false)
         .lt("created_at", cutoff)
         .limit(1);
 
+      if (staleError) throw staleError;
       if (stale && stale.length > 0) {
         found.push({
           type: "stale",
@@ -30,13 +31,14 @@ export function HealthBanner() {
 
       // Erros retornados pelo Facebook CAPI na última hora
       const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase
+      const { data: recent, error: recentError } = await supabase
         .from("fb_events_raw")
         .select("fb_response")
-        .eq("processed", true)
         .gte("created_at", since)
-        .limit(30);
+        .order("created_at", { ascending: false })
+        .limit(100);
 
+      if (recentError) throw recentError;
       const hasErrors = recent?.some((r) => {
         const resp = r.fb_response as Record<string, unknown> | null;
         if (!resp) return false;

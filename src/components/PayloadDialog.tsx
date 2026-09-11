@@ -1,3 +1,4 @@
+import { metaAccepted, deliveryLabel } from "@/lib/delivery";
 import {
   Dialog,
   DialogContent,
@@ -10,13 +11,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Server, Monitor, CheckCircle2, XCircle, Copy, Check, Info } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
-async function sha256(value: string): Promise<string> {
-  const buf = new TextEncoder().encode(value.toLowerCase().trim());
-  const hash = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
+
 
 interface PayloadDialogProps {
   open: boolean;
@@ -55,76 +52,19 @@ export const PayloadDialog = ({
   event,
 }: PayloadDialogProps) => {
   const [copiedId, setCopiedId] = useState(false);
-  const [browserJson, setBrowserJson] = useState<Record<string, any> | null>(null);
-
-  useEffect(() => {
-    if (!event) return;
-    const compute = async () => {
-      const [extId, ct, st, zp, country] = await Promise.all([
-        event.external_id ? sha256(event.external_id) : Promise.resolve(null),
-        event.city        ? sha256(event.city)        : Promise.resolve(null),
-        event.state       ? sha256(event.state)       : Promise.resolve(null),
-        event.zip         ? sha256(event.zip)         : Promise.resolve(null),
-        event.country     ? sha256(event.country)     : Promise.resolve(null),
-      ]);
-      setBrowserJson({
-        method:              "fbq('track', ...)",
-        pixel_id:            "642258762285772",
-        event_name:          event.event_name  || null,
-        event_id:            event.event_id    || null,
-        action_source:       "website",
-        event_source_url:    event.page_url    || null,
-        client_user_agent:   event.user_agent  || null,
-        client_ip_address:   event.ip          || null,
-        external_id:         extId,
-        fbp:                 event.fbp         || null,
-        fbc:                 event.fbc         || null,
-        currency:            "BRL",
-        ct,
-        st,
-        zp,
-        country,
-        event_day:           event.event_day           || null,
-        event_day_in_month:  event.event_day_in_month  || null,
-        event_month:         event.event_month         || null,
-        event_time_interval: event.event_time_interval || null,
-      });
-    };
-    compute();
-  }, [event]);
-
   if (!event) return null;
-
-  const sentViaServer  = event.processed === true;
-  const sentViaBrowser = !!event.fbp;
-  const eventId        = event.event_id || undefined;
-  const fbResponse     = event.fb_response;
-
-  const timeFields = {
-    event_day:           event.event_day           ?? null,
-    event_day_in_month:  event.event_day_in_month  ?? null,
-    event_month:         event.event_month         ?? null,
-    event_time_interval: event.event_time_interval ?? null,
+  const sentViaServer = metaAccepted(event.fb_response);
+  const sentViaBrowser = false;
+  const eventId = event.event_id || undefined;
+  const fbResponse = event.fb_response;
+  const payloadSent = event.payload_sent || null;
+  const browserJson = {
+    property_id: event.property_id, event_name: event.event_name, event_id: event.event_id,
+    page_url: event.page_url, event_time: event.event_time, fbp: event.fbp, fbc: event.fbc,
+    traffic_source: event.traffic_source, traffic_medium: event.traffic_medium,
+    custom_data: event.custom_data,
+    note: "Dados coletados; recebimento e deduplicação do Pixel não verificados",
   };
-  const payloadSent = event.payload_sent
-    ? event.payload_sent
-    : {
-        event_name:          event.event_name    || null,
-        event_time:          event.event_time    || null,
-        event_id:            event.event_id      || null,
-        page_url:            event.page_url      || null,
-        page_title:          event.page_title    || null,
-        external_id:         event.external_id   || null,
-        user_agent:          event.user_agent    || null,
-        fbp:                 event.fbp           || null,
-        fbc:                 event.fbc           || null,
-        ip:                  event.ip            || null,
-        country:             event.country       || null,
-        state:               event.state         || null,
-        city:                event.city          || null,
-        zip:                 event.zip           || null,
-        ...timeFields,
-      };
 
   const copyEventId = async () => {
     if (!eventId) return;
@@ -165,7 +105,7 @@ export const PayloadDialog = ({
                   </div>
                   {sentViaServer
                     ? <span className="flex items-center gap-1 text-xs font-semibold text-[hsl(var(--success))]"><CheckCircle2 className="h-3 w-3" />Enviado</span>
-                    : <span className="flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="h-3 w-3" />Pendente</span>}
+                    : <span className="flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="h-3 w-3" />{deliveryLabel(event)}</span>}
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -175,7 +115,7 @@ export const PayloadDialog = ({
                   </div>
                   {sentViaBrowser
                     ? <span className="flex items-center gap-1 text-xs font-semibold text-blue-400"><CheckCircle2 className="h-3 w-3" />Pixel ativo</span>
-                    : <span className="flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="h-3 w-3" />Sem pixel</span>}
+                    : <span className="flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="h-3 w-3" />Não verificado</span>}
                 </div>
 
                 {sentViaServer && sentViaBrowser && (
@@ -227,7 +167,7 @@ export const PayloadDialog = ({
             <div className="rounded-xl border border-border bg-muted/30 overflow-hidden flex flex-col">
               <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 bg-card shrink-0">
                 <Monitor className="h-3.5 w-3.5 text-blue-400" />
-                <span className="text-sm font-bold text-foreground">Navegador — pixel browser</span>
+                <span className="text-sm font-bold text-foreground">Dados coletados</span>
               </div>
               {browserJson
                 ? <JsonViewer json={browserJson} eventId={eventId} />

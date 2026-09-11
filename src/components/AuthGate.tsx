@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { Eye, EyeOff } from "lucide-react";
@@ -20,30 +20,32 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    let active = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) setError("Não foi possível recuperar a sessão. Faça login novamente.");
       setSession(data.session);
       setChecking(false);
+    }).catch(() => {
+      if (active) { setError("Não foi possível conectar. Tente novamente."); setChecking(false); }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+      if (active) { setSession(s); setChecking(false); }
     });
-    return () => sub.subscription.unsubscribe();
+    return () => { active = false; sub.subscription.unsubscribe(); };
   }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    setSubmitting(false);
-    if (error) {
-      setError("E-mail ou senha inválidos.");
-      return;
-    }
-    setPassword("");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) { setError(error.status === 400 ? "E-mail ou senha inválidos." : "Não foi possível entrar. Verifique sua conexão e tente novamente."); return; }
+      setPassword("");
+    } catch { setError("Não foi possível conectar. Tente novamente."); }
+    finally { setSubmitting(false); }
   }
 
   if (checking) {
@@ -54,7 +56,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (session) return <>{children}</>;
+  if (session) return <Fragment key={session.user.id}>{children}</Fragment>;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">

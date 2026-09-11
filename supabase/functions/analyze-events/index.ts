@@ -1,3 +1,7 @@
+import { readObject, RequestError, isUuid } from "../_shared/http.ts";
+import { authorized } from "../_shared/auth.ts";
+import { metaAccepted } from "../_shared/meta.ts";
+import { classifyTraffic } from "../_shared/attribution.ts";
 /**
  * Edge Function: analyze-events
  *
@@ -35,6 +39,15 @@ interface AiBlock    { summary: string; insights: string[]; score: number }
 
 interface EventRow {
   page_url: string | null;
+  referrer: string | null;
+  user_agent: string | null;
+  external_id: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  traffic_source: string | null;
+  traffic_medium: string | null;
+  fb_response: unknown;
   country: string | null;
   state: string | null;
   city: string | null;
@@ -48,11 +61,12 @@ interface EventRow {
 // ── Fetch ALL events (parallel batches) ───────────────────────────────────────
 async function fetchAllEvents(supabase: ReturnType<typeof createClient>, propertyId: string): Promise<EventRow[]> {
   // 1. Total count first
-  const { count } = await supabase
+  const { count, error: countError } = await supabase
     .from("fb_events_raw")
     .select("*", { count: "exact", head: true })
     .eq("property_id", propertyId);
 
+  if (countError) throw countError;
   const total = count ?? 0;
   if (total === 0) return [];
 
@@ -70,14 +84,15 @@ async function fetchAllEvents(supabase: ReturnType<typeof createClient>, propert
       batchIndexes.map(b =>
         supabase
           .from("fb_events_raw")
-          .select("page_url, country, state, city, ip, event_name, processed, event_day, event_time_interval")
+          .select("page_url, referrer, user_agent, external_id, utm_source, utm_medium, utm_campaign, traffic_source, traffic_medium, fb_response, country, state, city, ip, event_name, processed, event_day, event_time_interval")
           .eq("property_id", propertyId)
-          .order("created_at", { ascending: false })
+          .order("created_at", { ascending: false }).order("id", { ascending: false })
           .range(b * BATCH_SIZE, (b + 1) * BATCH_SIZE - 1)
       )
     );
 
-    for (const { data } of results) {
+    for (const { data, error } of results) {
+      if (error) throw error;
       if (data) allRows.push(...(data as EventRow[]));
     }
   }
@@ -101,16 +116,17 @@ function extractUtms(events: EventRow[]) {
   for (const evt of events) {
     try {
       const u = new URL(/^https?:\/\//i.test(evt.page_url ?? "") ? evt.page_url! : "https://x.com");
-      const s = u.searchParams.get("utm_source");
-      const m = u.searchParams.get("utm_medium");
-      const c = u.searchParams.get("utm_campaign");
+      const attr = classifyTraffic(evt);
+      const s = evt.traffic_source || attr.traffic_source;
+      const m = evt.traffic_medium || attr.traffic_medium;
+      const c = evt.utm_campaign || u.searchParams.get("utm_campaign");
       if (s) sources[s]   = (sources[s]   ?? 0) + 1;
       if (m) mediums[m]   = (mediums[m]   ?? 0) + 1;
       if (c) campaigns[c] = (campaigns[c] ?? 0) + 1;
     } catch { /* URL inválida */ }
   }
 
-  const withUtm = Object.values(sources).reduce((a, b) => a + b, 0);
+  const withUtm = events.filter(evt => evt.utm_source || /[?&]utm_source=/.test(evt.page_url || "")).length;
   return { withUtm, total: events.length, sources: sortTop(sources, 10), mediums: sortTop(mediums, 10), campaigns: sortTop(campaigns, 10) };
 }
 
@@ -125,7 +141,7 @@ function aggregateTraffic(events: EventRow[]) {
     if (evt.city)    cities[evt.city]         = (cities[evt.city]         ?? 0) + 1;
   }
 
-  const uniqueVisitors = new Set(events.map(e => e.ip).filter(Boolean)).size;
+  const uniqueVisitors = new Set(events.map(e => e.external_id || e.ip).filter(Boolean)).size;
   return { uniqueVisitors, total: events.length, countries: sortTop(countries, 10), states: sortTop(states, 10), cities: sortTop(cities, 10) };
 }
 
@@ -140,9 +156,11 @@ function aggregateEvents(events: EventRow[]) {
     if (evt.event_time_interval) intervals[evt.event_time_interval]      = (intervals[evt.event_time_interval]      ?? 0) + 1;
   }
 
-  const processed = events.filter(e => e.processed).length;
+  const processed = events.filter(e => metaAccepted(e.fb_response)).length;
+  const pending = events.filter(e => !e.processed).length;
+  const failed = events.filter(e => e.processed && !metaAccepted(e.fb_response)).length;
   return {
-    total: events.length, processed, pending: events.length - processed,
+    total: events.length, processed, pending, failed,
     processRate: events.length > 0 ? Math.round((processed / events.length) * 100) : 0,
     types: sortTop(types, 10), days: sortTop(days, 7), intervals: sortTop(intervals, 4),
   };
@@ -244,7 +262,7 @@ ${fmt(traffic.cities)}
 ${aiBlock(ai?.events ?? null, "IA indisponível nesta análise")}
 
 **Taxa CAPI:** ${evs.processRate}%
-**Processados:** ${evs.processed.toLocaleString()} | **Pendentes:** ${evs.pending.toLocaleString()}
+**Aceitos pelo Meta:** ${evs.processed.toLocaleString()} | **Pendentes:** ${evs.pending.toLocaleString()} | **Sem aceite:** ${evs.failed.toLocaleString()}
 
 **Tipos de evento:**
 ${fmt(evs.types)}
@@ -260,7 +278,7 @@ ${fmt(evs.intervals)}
 // ── Storage helpers ───────────────────────────────────────────────────────────
 async function ensureBucket(supabase: ReturnType<typeof createClient>) {
   try {
-    await supabase.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 10 * 1024 * 1024 });
+    await supabase.storage.createBucket(BUCKET, { public: false, fileSizeLimit: 10 * 1024 * 1024 });
   } catch { /* já existe */ }
 }
 
@@ -273,8 +291,8 @@ async function saveMarkdown(supabase: ReturnType<typeof createClient>, propertyI
     upsert: false,
   });
   if (error) { console.error("Storage upload failed:", error); return null; }
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(filename);
-  return data?.publicUrl ?? null;
+  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(filename, 3600);
+  return data?.signedUrl ?? null;
 }
 
 async function listAnalyses(supabase: ReturnType<typeof createClient>, propertyId: string) {
@@ -283,11 +301,11 @@ async function listAnalyses(supabase: ReturnType<typeof createClient>, propertyI
       sortBy: { column: "created_at", order: "desc" },
       limit: 50,
     });
-    return (data ?? []).map(f => ({
+    return await Promise.all((data ?? []).map(async f => ({
       name:      f.name,
       createdAt: f.created_at,
-      url:       supabase.storage.from(BUCKET).getPublicUrl(`${propertyId}/${f.name}`).data.publicUrl,
-    }));
+      url:       (await supabase.storage.from(BUCKET).createSignedUrl(`${propertyId}/${f.name}`, 3600)).data?.signedUrl ?? null,
+    })));
   } catch { return []; }
 }
 
@@ -295,14 +313,19 @@ async function listAnalyses(supabase: ReturnType<typeof createClient>, propertyI
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
+  if (req.method !== "POST") return new Response(null, { status: 405, headers: CORS });
   try {
-    const { propertyId } = await req.json();
-    if (!propertyId) return new Response(JSON.stringify({ error: "propertyId obrigatório" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } });
+    const authClient = createClient(SUPABASE_URL, SERVICE_KEY);
+    if (!await authorized(req, authClient, SERVICE_KEY, SUPABASE_URL)) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...CORS, "Content-Type": "application/json" } });
+    const { propertyId } = await readObject(req, 16384);
+    if (!isUuid(propertyId)) return new Response(JSON.stringify({ error: "propertyId obrigatório" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } });
 
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
     // Busca nome da propriedade
-    const { data: prop } = await supabase.from("properties").select("name").eq("id", propertyId).single();
+    const { data: prop, error: propError } = await supabase.from("properties").select("name").eq("id", propertyId).maybeSingle();
+    if (propError) throw propError;
+    if (!prop) return new Response(JSON.stringify({ error: "property_not_found" }), { status: 404, headers: { ...CORS, "Content-Type": "application/json" } });
     const propertyName   = prop?.name ?? propertyId;
 
     // Busca TODOS os eventos (sem limite)
@@ -336,7 +359,8 @@ Deno.serve(async (req: Request) => {
     );
 
   } catch (err) {
-    console.error("analyze-events error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: { "Content-Type": "application/json", ...CORS } });
+    if (err instanceof RequestError) return new Response(JSON.stringify({ error: err.message }), { status: err.status, headers: { "Content-Type": "application/json", ...CORS } });
+    console.error("analyze-events failed");
+    return new Response(JSON.stringify({ error: "analysis_unavailable" }), { status: 503, headers: { "Content-Type": "application/json", ...CORS } });
   }
 });

@@ -8,9 +8,10 @@ type Props = {
   onClose: () => void;
   onCreate: (name: string, pixelId: string, accessToken: string) => void;
   loading: boolean;
+  error?: string;
 };
 
-export function NewWorkspaceDialog({ open, onClose, onCreate, loading }: Props) {
+export function NewWorkspaceDialog({ open, onClose, onCreate, loading, error }: Props) {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
   const [pixelId, setPixelId] = useState("");
@@ -20,6 +21,7 @@ export function NewWorkspaceDialog({ open, onClose, onCreate, loading }: Props) 
   if (!open) return null;
 
   const handleClose = () => {
+    if (loading) return;
     setStep("name");
     setName("");
     setPixelId("");
@@ -28,6 +30,7 @@ export function NewWorkspaceDialog({ open, onClose, onCreate, loading }: Props) 
   };
 
   const handleCreate = () => {
+    if (loading) return;
     onCreate(name.trim(), pixelId.trim(), accessToken.trim());
   };
 
@@ -66,6 +69,7 @@ export function NewWorkspaceDialog({ open, onClose, onCreate, loading }: Props) 
 
         {/* Body */}
         <div className="px-6 py-6">
+          {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>}
           {step === "name" ? (
             <div className="flex flex-col gap-4">
               <div>

@@ -30,3 +30,7 @@ yarn-error.log*
 *.ntvs*
 *.njsproj
 *.sln
+
+# Browser test artifacts
+test-results/
+playwright-report/

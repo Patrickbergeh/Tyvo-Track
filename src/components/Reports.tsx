@@ -1,3 +1,4 @@
+import { metaAccepted } from "@/lib/delivery";
 import { useMemo, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -76,7 +77,7 @@ const PIE_COLORS = [
 
 const QUALITY_FIELDS = [
   { key: "fbp",         label: "FBP (cookie)"        },
-  { key: "fbc",         label: "FBC (clique de ad)"  },
+  { key: "fbc",         label: "FBC (identificador Meta)"  },
   { key: "external_id", label: "External ID"          },
   { key: "city",        label: "Geolocalização"       },
   { key: "processed",   label: "Enviado ao Facebook"  },
@@ -190,7 +191,7 @@ export const Reports = ({ events }: ReportsProps) => {
 
   const qualityData = useMemo(() => {
     return QUALITY_FIELDS.map(({ key, label }) => {
-      const count = events.filter((e) => key === "processed" ? e.processed === true : !!e[key]).length;
+      const count = events.filter((e) => key === "processed" ? metaAccepted(e.fb_response) : !!e[key]).length;
       return { label, count, pct: pct(count, total) };
     });
   }, [events, total]);

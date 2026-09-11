@@ -7,3 +7,10 @@ verify_jwt = false
 
 [functions.track]
 verify_jwt = false
+
+# Authorization is validated inside the handler (service role or logged-in user).
+[functions.process-fb-event]
+verify_jwt = false
+
+[functions.analyze-events]
+verify_jwt = true

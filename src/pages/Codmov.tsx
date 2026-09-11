@@ -1,6 +1,9 @@
+import { databaseDate } from "@/lib/dates";
+import { useProperties, selectedProperty } from "@/lib/properties";
+import { metaAccepted, deliveryLabel } from "@/lib/delivery";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +24,8 @@ interface LiveEvent {
   zip: string | null;
   external_id: string | null;
   processed: boolean | null;
+  fb_response: unknown;
+  delivery_status: string | null;
   fbp: string | null;
   fbc: string | null;
 }
@@ -52,13 +57,16 @@ function resolveName(raw: string | null, type: "country" | "state" | "city"): st
 }
 
 function fmtDate(iso: string) {
-  const d = new Date(iso);
+  const d = databaseDate(iso);
+  if (!d) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function timeAgo(iso: string) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const date = databaseDate(iso);
+  if (!date) return "—";
+  const s = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}min`;
   return `${Math.floor(s / 3600)}h`;
@@ -91,11 +99,11 @@ function EventCard({ ev }: { ev: LiveEvent }) {
           {ev.event_name}
         </span>
         <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-          ev.processed
+          metaAccepted(ev.fb_response)
             ? "bg-emerald-500/10 text-emerald-400"
             : "bg-yellow-500/10 text-yellow-400"
         }`}>
-          {ev.processed ? "Enviado" : "Pendente"}
+          {deliveryLabel(ev)}
         </span>
         <div className="flex-1" />
         <span className="text-[10px] text-muted-foreground/50 tabular-nums shrink-0">
@@ -152,55 +160,32 @@ function EventCard({ ev }: { ev: LiveEvent }) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 const Codmov = () => {
   const navigate = useNavigate();
-  const [events, setEvents] = useState<LiveEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
 
-  const { data: properties } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["properties"],
+  const { data: properties, isLoading: propertiesLoading, error: propertiesError } = useProperties();
+
+  const activePropertyId = selectedProperty(properties, localStorage.getItem("active-property-id"))?.id || "";
+
+  const { data: events = [], isLoading: eventsLoading, error: eventsError } = useQuery<LiveEvent[]>({
+    queryKey: ["live-events", activePropertyId],
+    enabled: !!activePropertyId,
     queryFn: async () => {
-      const { data } = await supabase
-        .from("properties")
-        .select("id,name")
-        .order("created_at", { ascending: true });
-      return (data ?? []) as { id: string; name: string }[];
+      const { data, error } = await supabase.from("fb_events_raw")
+        .select("id,event_name,page_url,page_title,created_at,ip,country,state,city,zip,external_id,processed,fb_response,delivery_status,fbp,fbc")
+        .eq("property_id", activePropertyId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(100);
+      if (error) throw error;
+      return (data ?? []) as LiveEvent[];
     },
-    staleTime: 60000,
+    refetchInterval: 15000,
   });
-
-  const activePropertyId =
-    localStorage.getItem("active-property-id") ||
-    properties?.[0]?.id ||
-    "";
-
-  const load = async (pid: string) => {
-    if (!pid) return;
-    const { data } = await supabase
-      .from("fb_events_raw")
-      .select("id,event_name,page_url,page_title,created_at,ip,country,state,city,zip,external_id,processed,fbp,fbc")
-      .eq("property_id", pid)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (data) setEvents(data as LiveEvent[]);
-    setLoading(false);
-  };
-
+  const loading = propertiesLoading || eventsLoading;
   useEffect(() => {
     if (!activePropertyId) return;
-    setLoading(true);
-    load(activePropertyId);
-    // Tempo real: recarrega na hora a cada novo evento desta propriedade
-    const channel = supabase
-      .channel(`codmov-rt-${activePropertyId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "fb_events_raw", filter: `property_id=eq.${activePropertyId}` },
-        () => load(activePropertyId)
-      )
-      .subscribe();
-    // Fallback por polling caso o realtime caia
-    const interval = setInterval(() => load(activePropertyId), 15000);
-    return () => { clearInterval(interval); supabase.removeChannel(channel); };
-  }, [activePropertyId]);
+    const channel = supabase.channel(`codmov-rt-${activePropertyId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "fb_events_raw", filter: `property_id=eq.${activePropertyId}` },
+        () => qc.invalidateQueries({ queryKey: ["live-events", activePropertyId] })).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [activePropertyId, qc]);
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
@@ -238,7 +223,7 @@ const Codmov = () => {
 
         {/* Lista com scroll */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {loading && events.length === 0 ? (
+          {propertiesError || eventsError ? <p role="alert" className="p-6 text-sm text-destructive">Não foi possível carregar os eventos. Verifique sua conexão.</p> : loading && events.length === 0 ? (
             <div className="flex items-center justify-center h-40">
               <div className="h-6 w-6 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
             </div>

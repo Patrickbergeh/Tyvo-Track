@@ -1,3 +1,5 @@
+import { validatePropertyPatch } from "@/lib/property-patch";
+import { useProperties, selectedProperty } from "@/lib/properties";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,14 +12,14 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const SUPABASE_PROJECT = "tqqqnmdffmzolnlrggqd";
+const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL as string;
 
 type SwitchDef = { label: string; description?: string; key: keyof Property };
 
 const SWITCHES: SwitchDef[] = [
   { label: "Pixel no Navegador", description: "Dispara o fbq() direto no browser do visitante", key: "browser_pixel" },
   { label: "Conversions API (CAPI)", description: "Envia eventos pelo servidor via API do Meta", key: "capi_enabled" },
-  { label: "Evento Add to Cart", description: "Adicione a class addtocart-btn nos botões do site", key: "event_add_to_cart" },
+  { label: "Evento Add to Cart", description: "Dispara no clique em addtocart-btn; em lojas, prefira confirmar a adição real ao carrinho", key: "event_add_to_cart" },
   { label: "Evento Add to Wishlist", description: "Adicione a class addtowhist-btn nos botões do site", key: "event_add_to_wishlist" },
   { label: "Evento Lead", description: "Dispara Lead ao enviar formulário Elementor com sucesso", key: "event_lead" },
   { label: "Disparar apenas uma vez por sessão", description: "Evita duplicação em recarregamentos de página", key: "fire_once" },
@@ -57,7 +59,7 @@ const Settings = () => {
   const [showToken, setShowToken] = useState(false);
   const [snippetMode, setSnippetMode] = useState<"url" | "full">("url");
   const [copied, setCopied] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePwd, setDeletePwd] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -69,55 +71,62 @@ const Settings = () => {
   const [form, setForm] = useState<Partial<Property>>({});
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedRef = useRef(false);
+  const pendingSave = useRef<{ id: string; patch: Partial<Property> } | null>(null);
+  const failedSave = useRef<Partial<Property>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const flushRef = useRef<() => void>(() => {});
 
-  const { data: properties, isLoading, error } = useQuery<Property[]>({
-    queryKey: ["properties"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("properties")
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-      return data ?? [];
-    },
-    staleTime: 60000,
-  });
+  const { data: properties, isLoading, error } = useProperties();
 
-  const activeProperty = properties?.find((p) => p.id === activePropertyId) ?? properties?.[0] ?? null;
+  const activeProperty = selectedProperty(properties, activePropertyId);
 
   useEffect(() => {
     if (activeProperty) {
       loadedRef.current = false;
       setForm(activeProperty);
       setShowToken(false);
-      setTimeout(() => { loadedRef.current = true; }, 0);
+      loadedRef.current = true;
     }
   }, [activeProperty?.id]);
 
   const saveMutation = useMutation({
-    mutationFn: async (data: Partial<Property>) => {
-      const { error } = await supabase.from("properties").update(data).eq("id", activeProperty!.id);
+    scope: { id: "property-settings" },
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Property> }) => {
+      const data = validatePropertyPatch(patch);
+      const { error } = await supabase.from("properties").update(data).eq("id", id);
       if (error) throw error;
     },
     onMutate: () => setSaveStatus("saving"),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["properties"] });
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+    onSuccess: (_data, { id, patch }) => {
+      for (const key of Object.keys(patch)) delete (failedSave.current as any)[key];
+      qc.setQueryData<Property[]>(["properties"], old => old?.map(p => p.id === id ? { ...p, ...validatePropertyPatch(patch) } : p));
+      if (!Object.keys(failedSave.current).length) { setSaveError(null); setSaveStatus("saved"); }
+    },
+    onError: (error, { patch }) => {
+      failedSave.current = { ...failedSave.current, ...patch };
+      setSaveStatus("error");
+      setSaveError(error instanceof Error ? error.message : "Não foi possível salvar as alterações. Tente novamente.");
     },
   });
 
-  const triggerSave = (newForm: Partial<Property>) => {
-    if (!loadedRef.current || !activeProperty) return;
+  const flushSave = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => saveMutation.mutate(newForm), 700);
+    const pending = pendingSave.current;
+    pendingSave.current = null;
+    if (pending) saveMutation.mutate(pending);
   };
+  flushRef.current = flushSave;
+  useEffect(() => () => flushRef.current(), []);
 
-  const saveNow = (newForm: Partial<Property>) => {
+  const triggerSave = (patch: Partial<Property>, immediate = false) => {
     if (!loadedRef.current || !activeProperty) return;
+    pendingSave.current = { id: activeProperty.id, patch: { ...pendingSave.current?.patch, ...patch } };
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    saveMutation.mutate(newForm);
+    setSaveStatus("saving");
+    if (immediate) flushSave();
+    else debounceRef.current = setTimeout(flushSave, 700);
   };
+  const saveNow = (patch: Partial<Property>) => triggerSave(patch, true);
 
   const val = (key: keyof Property): boolean =>
     Boolean(key in form ? form[key] : activeProperty?.[key] ?? false);
@@ -125,66 +134,34 @@ const Settings = () => {
   const toggle = (key: keyof Property) => {
     const newForm = { ...form, [key]: !val(key) };
     setForm(newForm);
-    saveNow(newForm);
+    saveNow({ [key]: newForm[key] });
   };
 
   const updateField = (key: keyof Property, value: string | null) => {
     const newForm = { ...form, [key]: value };
     setForm(newForm);
-    triggerSave(newForm);
+    triggerSave({ [key]: value });
   };
 
   async function confirmDelete() {
     if (!activeProperty || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
-
-    // 1) Identifica o usuário logado
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user?.email) {
-      setDeleteError("Sessão expirada. Recarregue a página e tente de novo.");
-      setDeleting(false);
-      return;
-    }
-
-    // 2) Valida a senha (re-autenticação do próprio usuário)
-    const { error: authErr } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password: deletePwd,
-    });
-    if (authErr) {
-      setDeleteError("Senha incorreta.");
-      setDeleting(false);
-      return;
-    }
-
-    // 3) Registra a exclusão na auditoria (somente no banco)
-    const { error: logErr } = await supabase.from("deletion_log").insert({
-      property_id: activeProperty.id,
-      property_name: activeProperty.name,
-      deleted_by: user.id,
-      deleted_by_email: user.email,
-      user_agent: navigator.userAgent,
-    });
-    if (logErr) {
-      setDeleteError("Falha ao registrar a exclusão. Tente novamente.");
-      setDeleting(false);
-      return;
-    }
-
-    // 4) Exclui a propriedade
-    const { error: delErr } = await supabase.from("properties").delete().eq("id", activeProperty.id);
-    if (delErr) {
-      setDeleteError("Não foi possível excluir. Tente novamente.");
-      setDeleting(false);
-      return;
-    }
-
-    qc.invalidateQueries({ queryKey: ["properties"] });
-    localStorage.removeItem("active-property-id");
-    setDeleteOpen(false);
-    setDeleting(false);
-    navigate("/");
+    const id = activeProperty.id;
+    setDeleting(true); setDeleteError(null);
+    try {
+      const { data: { user }, error: sessionError } = await supabase.auth.getUser();
+      if (sessionError || !user?.email) { setDeleteError("Sessão expirada. Faça login novamente."); return; }
+      const { error: authError } = await supabase.auth.signInWithPassword({ email: user.email, password: deletePwd });
+      if (authError) { setDeleteError("Não foi possível confirmar sua senha. Tente novamente."); return; }
+      // The log and deletion commit together; a failed deletion cannot leave a false audit entry.
+      const { error } = await supabase.rpc("delete_property_with_audit", { p_id: id, p_user_agent: navigator.userAgent });
+      if (error) throw error;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      pendingSave.current = null;
+      qc.invalidateQueries({ queryKey: ["properties"] });
+      localStorage.removeItem("active-property-id");
+      setDeletePwd(""); setDeleteOpen(false); navigate("/");
+    } catch { setDeleteError("Não foi possível excluir. Tente novamente."); }
+    finally { setDeleting(false); }
   }
 
   // Clique no olho: se já visível, só esconde; se oculto, pede a senha
@@ -197,39 +174,25 @@ const Settings = () => {
 
   async function confirmReveal() {
     if (revealing) return;
-    setRevealing(true);
-    setRevealError(null);
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user?.email) {
-      setRevealError("Sessão expirada. Recarregue a página.");
-      setRevealing(false);
-      return;
-    }
-    const { error: authErr } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password: revealPwd,
-    });
-    if (authErr) {
-      setRevealError("Senha incorreta.");
-      setRevealing(false);
-      return;
-    }
-    setShowToken(true);
-    setRevealOpen(false);
-    setRevealing(false);
+    setRevealing(true); setRevealError(null);
+    try {
+      const { data: { user }, error: sessionError } = await supabase.auth.getUser();
+      if (sessionError || !user?.email) { setRevealError("Sessão expirada. Faça login novamente."); return; }
+      const { error } = await supabase.auth.signInWithPassword({ email: user.email, password: revealPwd });
+      if (error) { setRevealError("Não foi possível confirmar sua senha. Tente novamente."); return; }
+      setShowToken(true); setRevealPwd(""); setRevealOpen(false);
+    } catch { setRevealError("Não foi possível conectar. Tente novamente."); }
+    finally { setRevealing(false); }
   }
 
-
   const loaderUrl = activeProperty
-    ? `https://${SUPABASE_PROJECT}.supabase.co/functions/v1/loader?id=${activeProperty.id}`
+    ? `${SUPABASE_URL}/functions/v1/loader?id=${activeProperty.id}`
     : "";
   const loaderTag = activeProperty ? `<script src="${loaderUrl}"></script>` : "";
 
-  const copy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    catch { setSaveError("Não foi possível copiar. Selecione e copie o código manualmente."); }
   };
 
   return (
@@ -256,7 +219,7 @@ const Settings = () => {
 
           <div className="flex items-center gap-3">
             <span className={`text-xs transition-opacity duration-300 ${saveStatus === "idle" ? "opacity-0" : "opacity-100"} ${saveStatus === "saved" ? "text-green-500" : "text-muted-foreground"}`}>
-              {saveStatus === "saving" ? "Salvando…" : "✓ Salvo"}
+              {saveStatus === "saving" ? "Salvando…" : saveStatus === "error" ? "Falha ao salvar" : "✓ Salvo"}
             </span>
             <ThemeToggle />
           </div>
@@ -280,6 +243,8 @@ const Settings = () => {
           ))}
         </div>
       </header>
+
+      {saveError && <div role="alert" className="px-6 py-3 text-sm text-destructive">{saveError} <button className="underline" onClick={() => saveNow(failedSave.current)}>Tentar salvar novamente</button></div>}
 
       {/* Carregando (cache frio) */}
       {isLoading && !activeProperty && (
@@ -475,6 +440,13 @@ const Settings = () => {
                     {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
                     {copied ? "Copiado!" : "Copiar"}
                   </button>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-2 text-xs">
+                  <p className="font-semibold">Separar Instagram orgânico de anúncios</p>
+                  <p className="text-muted-foreground">No link da bio, acrescente estes parâmetros à URL de destino:</p>
+                  <code className="block break-all">?utm_source=instagram&amp;utm_medium=organic_social&amp;utm_content=bio</code>
+                  <p className="text-muted-foreground">Nos anúncios, use utm_medium=paid_social. Se a URL já tiver ?, acrescente os parâmetros com &amp;. O fbclid pode aparecer nos dois casos e não comprova tráfego pago.</p>
                 </div>
 
                 {snippetMode === "url" && (

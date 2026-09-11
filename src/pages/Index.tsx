@@ -1,3 +1,7 @@
+import { eventDate } from "@/lib/dates";
+import { previewUrl } from "@/lib/urls";
+import { useProperties, selectedProperty } from "@/lib/properties";
+import { metaAccepted, deliveryLabel } from "@/lib/delivery";
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -114,7 +118,7 @@ const PageCell = ({ title, url }: { title: string; url: string }) => {
   const hide = () => { timer.current = setTimeout(() => setOpen(false), 150); };
   const clean = url ? stripUtm(url) : "";
   // src do preview leva um sinalizador para o tracker NÃO disparar pixel/evento
-  const previewSrc = clean ? clean + (clean.includes("?") ? "&" : "?") + "_tk_preview=1" : "";
+  const previewSrc = previewUrl(clean);
   if (!url) return <span className="text-xs text-muted-foreground">{title}</span>;
   return (
     <div className="relative inline-block max-w-[200px]" onMouseEnter={show} onMouseLeave={hide} onTouchStart={() => setOpen(v => !v)}>
@@ -150,6 +154,7 @@ const Index = () => {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [payloadEvt, setPayloadEvt] = useState<any>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [reprocessing, setReprocessing] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [newWsOpen, setNewWsOpen] = useState(false);
@@ -169,20 +174,9 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
     : datePreset === "custom" && customRange ? customRange
     : getPresetRange(datePreset as Exclude<DatePreset, "all" | "custom">);
 
-  const { data: properties } = useQuery<Property[]>({
-    queryKey: ["properties"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("properties")
-        .select("id,name,pixel_id,access_token,browser_pixel,capi_enabled,event_add_to_cart,event_add_to_wishlist,event_lead,tracking_enabled,fire_once,test_event_code,test_event_active,created_at")
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-      return data ?? [];
-    },
-    staleTime: 60000,
-  });
+  const { data: properties, error: propertiesError } = useProperties();
 
-  const activeProperty = properties?.find(p => p.id === activePropertyId) ?? properties?.[0] ?? null;
+  const activeProperty = selectedProperty(properties, activePropertyId);
 
   const handleSelectProperty = (id: string) => {
     localStorage.setItem("active-property-id", id);
@@ -232,21 +226,27 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
   });
 
   const reprocessPending = async () => {
+    if (!activeProperty) return;
+    setActionError(null);
     setReprocessing(true);
     try {
-      await supabase.functions.invoke("process-fb-event");
-    } catch (e) { console.error(e); }
+      const { error } = await supabase.functions.invoke("process-fb-event", { body: { propertyId: activeProperty?.id } });
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ["fb-events-raw"] });
+      qc.invalidateQueries({ queryKey: ["fb-events-stats"] });
+    } catch { setActionError("Não foi possível reprocessar os eventos. Tente novamente."); }
     finally { setReprocessing(false); }
   };
 
   const openPayload = async (evt: any) => {
-    const { data } = await supabase.from("fb_events_raw").select("*").eq("id", evt.id).single();
-    setPayloadEvt(data ?? evt);
+    const { data, error } = await supabase.from("fb_events_raw").select("*").eq("id", evt.id).single();
+    if (error) { setActionError("Não foi possível carregar os detalhes do evento."); return; }
+    setPayloadEvt(data);
   };
 
   // Paginação server-side: carrega só a página atual (.range) e o total real (count),
   // nunca 100% dos dados de uma vez. Filtro de data aplicado no servidor (igual aos stats).
-  const { data: eventsData, isLoading } = useQuery({
+  const { data: eventsData, isLoading, error: eventsError } = useQuery({
     queryKey: ["fb-events-raw", activeProperty?.id, page, activeDateRange?.from?.toISOString(), activeDateRange?.to?.toISOString()],
     queryFn: async () => {
       if (!activeProperty) return { rows: [], totalCount: 0 };
@@ -254,14 +254,14 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
       const toIdx = fromIdx + PAGE_SIZE - 1;
       let q = supabase
         .from("fb_events_raw")
-        .select("id,event_name,event_time,created_at,processed,page_url,page_title,ip,country,state,city,zip,fbp,fbc,external_id,user_agent,event_id,event_day,event_day_in_month,event_month,event_time_interval,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id", { count: "exact" })
+        .select("id,event_name,event_time,created_at,processed,fb_response,delivery_status,traffic_source,traffic_medium,page_url,page_title,ip,country,state,city,zip,fbp,fbc,external_id,user_agent,event_id,event_day,event_day_in_month,event_month,event_time_interval,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id", { count: "exact" })
         .eq("property_id", activeProperty.id);
       if (activeDateRange) {
         q = q.gte("created_at", activeDateRange.from.toISOString())
              .lte("created_at", activeDateRange.to.toISOString());
       }
       const { data, error, count } = await q
-        .order("created_at", { ascending: false })
+        .order("created_at", { ascending: false }).order("id", { ascending: false })
         .range(fromIdx, toIdx);
       if (error) throw error;
       return { rows: data ?? [], totalCount: count ?? 0 };
@@ -269,28 +269,29 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
     enabled: !!activeProperty,
     refetchInterval: 20000,
     staleTime: 30000,
-    placeholderData: (prev) => prev, // mantém a página anterior visível enquanto carrega a nova
   });
 
-  const { data: statsData } = useQuery({
+  const { data: statsData, error: statsError } = useQuery({
     queryKey: ["fb-events-stats", activeProperty?.id, activeDateRange?.from?.toISOString(), activeDateRange?.to?.toISOString()],
     queryFn: async () => {
-      if (!activeProperty) return { total: 0, processed: 0, unique: 0 };
+      if (!activeProperty) return { total: 0, processed: 0, pending: 0, unique: 0 };
       const applyFilters = (q: any) => {
         q = q.eq("property_id", activeProperty.id);
         if (!activeDateRange) return q;
         return q.gte("created_at", activeDateRange.from.toISOString()).lte("created_at", activeDateRange.to.toISOString());
       };
-      const [{ count: total }, { count: proc }, uniqRes] = await Promise.all([
+      const [totalRes, acceptedRes, pendingRes, uniqRes] = await Promise.all([
         applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true })),
-        applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true }).eq("processed", true)),
+        applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true }).gt("fb_response->>events_received", "0").is("fb_response->error", null)),
+        applyFilters(supabase.from("fb_events_raw").select("*", { count: "exact", head: true }).eq("processed", false)),
         supabase.rpc("unique_visitors", {
           p_property: activeProperty.id,
           p_from: activeDateRange?.from?.toISOString() ?? null,
           p_to: activeDateRange?.to?.toISOString() ?? null,
         }),
       ]);
-      return { total: total ?? 0, processed: proc ?? 0, unique: Number(uniqRes.data ?? 0) };
+      for (const result of [totalRes, acceptedRes, pendingRes, uniqRes]) if (result.error) throw result.error;
+      return { total: totalRes.count ?? 0, processed: acceptedRes.count ?? 0, pending: pendingRes.count ?? 0, unique: Number(uniqRes.data ?? 0) };
     },
     enabled: !!activeProperty,
     refetchInterval: 20000,
@@ -319,14 +320,14 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
 
   const totalEvents = statsData?.total ?? 0;
   const processed   = statsData?.processed ?? 0;
-  const pending     = totalEvents - processed;
+  const pending     = statsData?.pending ?? 0;
   const uniqueVisitors = statsData?.unique ?? 0;
 
   // Total real de páginas vem do count do servidor (não das linhas carregadas)
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // Se a página atual passar do total (ex.: após trocar filtro/propriedade), volta p/ a última válida
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  useEffect(() => { if (eventsData && page > totalPages) setPage(totalPages); }, [page, totalPages, eventsData]);
 
   const setView_ = (v: "table" | "map") => {
     localStorage.setItem("dashboard-view", v);
@@ -335,6 +336,7 @@ const [datePreset, setDatePreset] = useState<DatePreset>("all");
 return (
     <>
       <HealthBanner />
+      {(propertiesError || eventsError || statsError || actionError || createProperty.error || toggleTracking.error) && <p role="alert" className="px-6 py-3 text-sm text-destructive">{actionError || "Não foi possível concluir a operação. Verifique sua conexão e tente novamente."}</p>}
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="border-b border-border bg-background shrink-0">
         <div className="flex items-center justify-between px-6 h-[60px] gap-4">
@@ -422,7 +424,7 @@ return (
           {[
             { label: "Visitas Únicas", value: uniqueVisitors, color: "text-foreground", icon: Users, iconColor: "text-blue-500", bg: "bg-blue-500/8" },
             { label: "Total de Eventos", value: totalEvents, color: "text-foreground", icon: Zap, iconColor: "text-primary", bg: "bg-primary/8" },
-            { label: "Processados", value: processed, color: "text-[hsl(var(--success))]", icon: CheckCircle2, iconColor: "text-[hsl(var(--success))]", bg: "bg-[hsl(var(--success))]/8" },
+            { label: "Aceitos pelo Meta", value: processed, color: "text-[hsl(var(--success))]", icon: CheckCircle2, iconColor: "text-[hsl(var(--success))]", bg: "bg-[hsl(var(--success))]/8" },
             { label: "Pendentes", value: pending, color: "text-[hsl(var(--warning))]", icon: CircleDot, iconColor: "text-[hsl(var(--warning))]", bg: "bg-[hsl(var(--warning))]/8" },
           ].map(({ label, value, color, icon: Icon, iconColor, bg }) => (
             <Card key={label} className="border-border shadow-none">
@@ -500,33 +502,30 @@ return (
                   </TableHeader>
                   <TableBody>
                     {events.map(evt => {
-                      const time = evt.event_time
-                        ? format(new Date(evt.event_time * 1000), "dd/MM/yy HH:mm:ss", { locale: ptBR })
-                        : evt.created_at
-                        ? format(new Date(evt.created_at), "dd/MM/yy HH:mm:ss", { locale: ptBR })
-                        : "—";
+                      const date = eventDate(evt);
+                      const time = date ? format(date, "dd/MM/yy HH:mm:ss", { locale: ptBR }) : "—";
                       return (
                         <TableRow key={evt.id} className="border-border hover:bg-muted/30 transition-colors">
                           <TableCell className="py-2">
-                            {evt.processed ? (
+                            {metaAccepted(evt.fb_response) ? (
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[hsl(var(--success))]">
                                 <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))]" />
-                                Enviado
+                                Aceito
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
                                 <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                                Pendente
+                                {deliveryLabel(evt)}
                               </span>
                             )}
                           </TableCell>
                           <TableCell className="py-2">
                             <div className="flex items-center gap-1">
-                              <span title="CAPI" className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded font-medium ${evt.processed ? "bg-[hsl(var(--success))]/10 text-[hsl(var(--success))]" : "bg-muted text-muted-foreground"}`}>
+                              <span title="CAPI" className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded font-medium ${metaAccepted(evt.fb_response) ? "bg-[hsl(var(--success))]/10 text-[hsl(var(--success))]" : "bg-muted text-muted-foreground"}`}>
                                 <Server className="h-2 w-2" /> CAPI
                               </span>
-                              <span title="Pixel" className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded font-medium ${evt.fbp ? "bg-blue-500/10 text-blue-500" : "bg-muted text-muted-foreground"}`}>
-                                <Monitor className="h-2 w-2" /> Pixel
+                              <span title="Identificador de navegador presente; não confirma recebimento do Pixel" className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded font-medium ${evt.fbp ? "bg-blue-500/10 text-blue-500" : "bg-muted text-muted-foreground"}`}>
+                                <Monitor className="h-2 w-2" /> FBP
                               </span>
                             </div>
                           </TableCell>
@@ -539,8 +538,8 @@ return (
                           <TableCell className="py-2 max-w-[180px]">
                             <PageCell title={evt.page_title || "—"} url={evt.page_url || ""} />
                           </TableCell>
-                          <TableCell className="py-2 text-center pl-5"><UtmCell w={120} value={prettySource(evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
-                          <TableCell className="py-2 text-center"><UtmCell w={90}  value={prettyMedium(evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
+                          <TableCell className="py-2 text-center pl-5"><UtmCell w={120} value={prettySource(evt.traffic_source ?? evt.utm_source ?? utmFromUrl(evt.page_url, "utm_source"))} /></TableCell>
+                          <TableCell className="py-2 text-center"><UtmCell w={90}  value={prettyMedium(evt.traffic_medium ?? evt.utm_medium ?? utmFromUrl(evt.page_url, "utm_medium"))} /></TableCell>
                           <TableCell className="py-2 text-center"><UtmCell w={135} value={evt.utm_campaign ?? utmFromUrl(evt.page_url, "utm_campaign")} /></TableCell>
                           <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">
                             {deviceType(evt.user_agent) ?? "—"}
@@ -595,6 +594,7 @@ return (
 
       <PayloadDialog open={!!payloadEvt} onOpenChange={open => !open && setPayloadEvt(null)} event={payloadEvt} />
       <NewWorkspaceDialog
+        error={createProperty.error ? "Não foi possível criar o workspace. Tente novamente." : undefined}
         open={newWsOpen}
         onClose={() => setNewWsOpen(false)}
         onCreate={(name, pixelId, accessToken) => createProperty.mutate({ name, pixelId, accessToken })}

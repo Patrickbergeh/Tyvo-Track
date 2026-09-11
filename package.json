@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "build:edge": "bun scripts/build-edge.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",
@@ -37,6 +41,10 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "22",
+    "@types/react": "18",
+    "@types/react-dom": "18",
     "@vitejs/plugin-react-swc": "^3.5.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",

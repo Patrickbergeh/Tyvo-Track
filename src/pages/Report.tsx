@@ -1,3 +1,4 @@
+import { useProperties, selectedProperty } from "@/lib/properties";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,17 +32,10 @@ const Report = () => {
     : datePreset === "custom" && customRange ? customRange
     : getPresetRange(datePreset as Exclude<DatePreset, "all" | "custom">);
 
-  const { data: properties } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["properties"],
-    queryFn: async () => {
-      const { data } = await supabase.from("properties").select("id,name").order("created_at", { ascending: true });
-      return (data ?? []) as { id: string; name: string }[];
-    },
-    staleTime: 60000,
-  });
-  const activePropertyId = localStorage.getItem("active-property-id") || properties?.[0]?.id || "";
+  const { data: properties, isLoading: propertiesLoading, error: propertiesError } = useProperties();
+  const activePropertyId = selectedProperty(properties, localStorage.getItem("active-property-id"))?.id || "";
 
-  const { data: rows, isLoading } = useQuery<Row[]>({
+  const { data: rows, isLoading, error: reportError } = useQuery<Row[]>({
     queryKey: ["utm-report", activePropertyId, activeDateRange?.from?.toISOString(), activeDateRange?.to?.toISOString()],
     queryFn: async () => {
       if (!activePropertyId) return [];
@@ -56,7 +50,6 @@ const Report = () => {
     enabled: !!activePropertyId,
     refetchInterval: 60000,
     staleTime: 30000,
-    placeholderData: (prev) => prev, // mantém os dados na tela ao trocar o filtro (nada some)
   });
 
   // ── Agregações (valor real, vindo do servidor) ──
@@ -68,7 +61,7 @@ const Report = () => {
 
   const srcMap = new Map<string, number>();
   for (const r of all) {
-    const label = prettySource(r.src) ?? "Direto / sem origem";
+    const label = prettySource(r.src) ?? "Origem não determinada";
     srcMap.set(label, (srcMap.get(label) ?? 0) + Number(r.total));
   }
   const bySource = [...srcMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
@@ -99,7 +92,7 @@ const Report = () => {
       </header>
 
       <main className="flex-1 overflow-y-auto pt-4">
-        {isLoading ? (
+        {reportError || propertiesError ? <p className="p-6 text-sm text-destructive">Não foi possível carregar o relatório. Tente novamente.</p> : isLoading || propertiesLoading ? (
           <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">Carregando relatório…</div>
         ) : total === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
@@ -111,6 +104,7 @@ const Report = () => {
           </div>
         ) : (
           <div className="w-full space-y-5">
+            <p className="text-xs text-muted-foreground">Acessos contam PageViews únicos por evento. Pago e orgânico dependem de UTMs; fbclid sozinho não comprova anúncio. Sem evidência suficiente, o acesso fica em Outros.</p>
             {/* KPIs */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard icon={Users}      label="Total de acessos" value={total}            accent="text-foreground"             sub="no período" />
